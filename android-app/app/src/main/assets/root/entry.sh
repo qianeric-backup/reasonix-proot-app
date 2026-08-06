@@ -25,7 +25,7 @@ fi
 
 # reasonix bash 沙箱兜底：Android 无 bubblewrap（bwrap），enforce 会拒绝所有 shell 命令，
 # 每次启动确保 [sandbox] bash = "off"（Java 端 ensureSandboxDisabled 已预置，此处防配置被改）。
-CONF="$HOME/.config/reasonix/config.toml"
+CONF="$HOME/.reasonix/config.toml"
 if [ -f "$CONF" ] && grep -q 'bash *= *"enforce"' "$CONF" 2>/dev/null; then
     sed -i 's/bash *= *"enforce"/bash = "off"/' "$CONF" 2>/dev/null
 fi

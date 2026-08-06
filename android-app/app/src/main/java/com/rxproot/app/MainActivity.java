@@ -274,7 +274,9 @@ public class MainActivity extends Activity {
     /** 确保 reasonix 的 bash 沙箱关闭（Android 无 bubblewrap，enforce 会拒绝所有 shell 命令） */
     private void ensureSandboxDisabled(File rootfs) {
         try {
-            File conf = new File(new File(rootfs, "root/.config/reasonix"), "config.toml");
+            // 注意：reasonix 的配置路径是 ~/.reasonix/config.toml（实测 reasonix config 命令输出
+            // "cli_metrics = ... (~/.reasonix/config.toml)"），不是 ~/.config/reasonix/！
+            File conf = new File(new File(rootfs, "root/.reasonix"), "config.toml");
             conf.getParentFile().mkdirs();
             String content = conf.exists()
                     ? new String(java.nio.file.Files.readAllBytes(conf.toPath()), StandardCharsets.UTF_8)
@@ -330,7 +332,10 @@ public class MainActivity extends Activity {
                     + "kind        = \"openai\"\n"
                     + "base_url    = \"https://api.deepseek.com\"\n"
                     + "model       = \"deepseek-v4-flash\"\n"
-                    + "api_key_env = \"DEEPSEEK_API_KEY\"\n";
+                    + "api_key_env = \"DEEPSEEK_API_KEY\"\n"
+                    + "\n"
+                    + "[sandbox]\n"
+                    + "bash = \"off\"\n";
             try (FileOutputStream fo = new FileOutputStream(cfg)) {
                 fo.write(configToml.getBytes(StandardCharsets.UTF_8));
             }
