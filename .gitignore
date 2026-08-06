@@ -15,3 +15,4 @@ android-app/build/
 android-app/app/build/
 android-app/.idea/
 *.iml
+/reasonix-proot.apk
