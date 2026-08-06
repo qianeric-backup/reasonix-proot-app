@@ -174,7 +174,8 @@ public class MainActivity extends Activity {
             if (!new File(files, ".installed").exists()) {
                 setupEnvironment(files, rootfs);
             } else {
-                Log.d(TAG, "environment already installed, skipping setup");
+                Log.d(TAG, "environment already installed, refreshing runtime assets");
+                refreshAssets(files, rootfs);
             }
             ensureReasonixConfig(rootfs);
         } catch (Exception e) {
@@ -257,6 +258,25 @@ public class MainActivity extends Activity {
         } catch (IOException e) {
             Log.e(TAG, "failed to write reasonix config", e);
         }
+    }
+
+    /** 覆盖安装后刷新可更新的 assets（entry.sh/reasonix/pty-bridge 随 APK 版本更新） */
+    private void refreshAssets(File files, File rootfs) throws IOException {
+        // reasonix
+        File rx = new File(rootfs, "usr/local/bin/reasonix");
+        rx.getParentFile().mkdirs();
+        extractAsset("usr/bin/reasonix", rx);
+        rx.setExecutable(true, false);
+        // pty-bridge
+        File bridge = new File(rootfs, "usr/bin/pty-bridge");
+        bridge.getParentFile().mkdirs();
+        extractAsset("usr/bin/pty-bridge", bridge);
+        bridge.setExecutable(true, false);
+        // entry.sh
+        File entry = new File(rootfs, "root/entry.sh");
+        extractAsset("root/entry.sh", entry);
+        entry.setExecutable(true, false);
+        Log.d(TAG, "runtime assets refreshed");
     }
 
     /** 首次启动：解压 Alpine rootfs、部署 proot/pty-bridge/reasonix/启动脚本 */
