@@ -2,14 +2,18 @@ package com.rxproot.app;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.text.InputType;
 import android.util.Log;
+import android.view.inputmethod.EditorInfo;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.EditText;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -121,10 +125,85 @@ public class MainActivity extends Activity {
             } else {
                 Log.d(TAG, "environment already installed, skipping setup");
             }
-            startProot(files, rootfs);
+            ensureReasonixConfig(rootfs);
         } catch (Exception e) {
             Log.e(TAG, "startEnvironment failed", e);
             pushOutput("\r\n[初始化失败] " + e + "\r\n");
+        }
+    }
+
+    /** 启动 proot（包装 IOException，供回调/lambda 使用） */
+    private void safeStartProot() {
+        try {
+            startProot(getFilesDir(), new File(getFilesDir(), "rootfs"));
+        } catch (IOException e) {
+            Log.e(TAG, "startProot failed", e);
+            pushOutput("\r\n[启动失败] " + e + "\r\n");
+        }
+    }
+
+    /**
+     * 首次使用快捷配置：检查 guest 内 ~/.reasonix/config.toml 与 .env；
+     * 缺失时弹出 API Key 输入对话框，保存后写入配置再启动 reasonix。
+     */
+    private void ensureReasonixConfig(File rootfs) {
+        File home = new File(rootfs, "root/.reasonix");
+        File cfg = new File(home, "config.toml");
+        File env = new File(home, ".env");
+        if (cfg.exists() && env.exists()) {
+            Log.d(TAG, "reasonix config already present, skipping dialog");
+            safeStartProot();
+            return;
+        }
+        Log.d(TAG, "reasonix config missing, showing API key dialog");
+        ui.post(() -> showApiKeyDialog(rootfs, home, cfg, env));
+    }
+
+    private void showApiKeyDialog(final File rootfs, final File home, final File cfg, final File env) {
+        final EditText input = new EditText(this);
+        input.setHint("sk-...（DeepSeek API Key）");
+        input.setSingleLine(true);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        input.setImeOptions(EditorInfo.IME_ACTION_DONE);
+
+        new AlertDialog.Builder(this)
+                .setTitle("配置 Reasonix API Key")
+                .setMessage("首次使用需要 DeepSeek API Key（platform.deepseek.com 获取）。\n保存后自动进入 reasonix；也可稍后在终端运行 reasonix setup 修改。")
+                .setView(input)
+                .setPositiveButton("保存并启动", (d, w) -> {
+                    String key = input.getText().toString().trim();
+                    if (!key.isEmpty()) {
+                        writeReasonixConfig(home, cfg, env, key);
+                    } else {
+                        Log.w(TAG, "empty API key, starting without config");
+                    }
+                })
+                .setNegativeButton("跳过", (d, w) -> Log.d(TAG, "skipped API key dialog"))
+                .setOnDismissListener(d -> safeStartProot())
+                .show();
+    }
+
+    /** 写入 reasonix 配置（config.toml + .env，DeepSeek provider）；文件很小，同步执行 */
+    private void writeReasonixConfig(File home, File cfg, File env, String apiKey) {
+        try {
+            home.mkdirs();
+            String configToml = "default_model = \"deepseek-flash\"\n"
+                    + "\n"
+                    + "[[providers]]\n"
+                    + "name        = \"deepseek-flash\"\n"
+                    + "kind        = \"openai\"\n"
+                    + "base_url    = \"https://api.deepseek.com\"\n"
+                    + "model       = \"deepseek-v4-flash\"\n"
+                    + "api_key_env = \"DEEPSEEK_API_KEY\"\n";
+            try (FileOutputStream fo = new FileOutputStream(cfg)) {
+                fo.write(configToml.getBytes(StandardCharsets.UTF_8));
+            }
+            try (FileOutputStream fo = new FileOutputStream(env)) {
+                fo.write(("DEEPSEEK_API_KEY=" + apiKey + "\n").getBytes(StandardCharsets.UTF_8));
+            }
+            Log.d(TAG, "reasonix config written: " + cfg.getAbsolutePath());
+        } catch (IOException e) {
+            Log.e(TAG, "failed to write reasonix config", e);
         }
     }
 

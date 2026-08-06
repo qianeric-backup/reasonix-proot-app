@@ -61,8 +61,10 @@ call gradlew.bat assembleDebug
 adb install reasonix-proot.apk
 ```
 
-1. 首次打开：自动解压 Linux 环境（约 30 秒）→ 进入 reasonix。
-2. 首次使用：在终端运行 `reasonix setup` 配置 Provider 与 API key（需联网）。
+1. 首次打开：自动解压 Linux 环境（约 30 秒）→ **弹出 API Key 配置对话框**，填入 DeepSeek
+   API Key（platform.deepseek.com 获取）点击"保存并启动"，即可直接进入 reasonix 会话。
+2. 已配置过则直接进入；如需更换 Key，在终端运行 `reasonix setup` 或删除
+   应用数据后重开。
 3. 退出 reasonix 后自动回到 Alpine shell；输入 `exit` 关闭。
 
 ## 已知限制
