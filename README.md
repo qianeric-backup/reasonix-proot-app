@@ -12,6 +12,8 @@
 - **屏幕自适应**：终端按手机视口自动计算行列并实时同步 PTY（旋转/软键盘自动重排）。
 - **触摸滚动**：reasonix TUI 内滑动 → 模拟 SGR 滚轮事件滚动历史输出；shell 主屏滑动 → 滚动终端 scrollback。
 - **离线打包**：Alpine rootfs、proot、reasonix、xterm.js 全部内置，首次启动解压后无需网络（reasonix 调用 API 时才需联网）。
+- **手机存储访问**：首次启动请求存储权限；guest 内 `/sdcard` 直接映射手机共享存储，reasonix
+  可读写照片/文档/下载等（Android 13+ 非媒体文件需在系统设置授予"所有文件访问"）。
 
 ## 架构
 

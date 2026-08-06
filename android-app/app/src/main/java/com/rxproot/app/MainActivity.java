@@ -3,7 +3,12 @@ package com.rxproot.app;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.Intent;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
+import android.provider.Settings;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.InputType;
@@ -67,6 +72,52 @@ public class MainActivity extends Activity {
         webView.addJavascriptInterface(this, "Android");
         setContentView(webView);
         webView.loadUrl("file:///android_asset/web/index.html");
+    }
+
+    /** 请求运行时存储权限（媒体文件；Android 13+ 用 READ_MEDIA_*） */
+    private void requestStoragePermission() {
+        try {
+            if (Build.VERSION.SDK_INT >= 33) {
+                requestPermissions(new String[]{
+                        "android.permission.READ_MEDIA_IMAGES",
+                        "android.permission.READ_MEDIA_VIDEO",
+                        "android.permission.READ_MEDIA_AUDIO"}, 100);
+            } else if (Build.VERSION.SDK_INT >= 23) {
+                requestPermissions(new String[]{"android.permission.READ_EXTERNAL_STORAGE"}, 100);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "permission request failed", e);
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // API 30+ 的"所有文件访问"（MANAGE_EXTERNAL_STORAGE）：非媒体文件（文档/下载等）
+        // 需要用户在系统设置里授权；从设置页返回时检查并提示。
+        if (Build.VERSION.SDK_INT >= 30 && !Environment.isExternalStorageManager()) {
+            boolean asked = getSharedPreferences("prefs", MODE_PRIVATE)
+                    .getBoolean("storage_asked", false);
+            if (asked) {
+                new AlertDialog.Builder(this)
+                        .setTitle("存储权限")
+                        .setMessage("如需让 reasonix 访问手机全部文件（文档、下载、非媒体等），请授予\"所有文件访问\"权限。")
+                        .setPositiveButton("去授权", (d, w) -> {
+                            try {
+                                startActivity(new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                                        Uri.parse("package:" + getPackageName())));
+                            } catch (Exception e) {
+                                try {
+                                    startActivity(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION));
+                                } catch (Exception e2) {
+                                    Log.w(TAG, "cannot open manage-all-files settings", e2);
+                                }
+                            }
+                        })
+                        .setNegativeButton("暂不", null)
+                        .show();
+            }
+        }
     }
 
     /** 由 xterm.js 调用：把终端按键输入写入子进程 stdin（经 pty-bridge 转发到 PTY） */
@@ -156,6 +207,7 @@ public class MainActivity extends Activity {
             return;
         }
         Log.d(TAG, "reasonix config missing, showing API key dialog");
+        getSharedPreferences("prefs", MODE_PRIVATE).edit().putBoolean("storage_asked", true).apply();
         ui.post(() -> showApiKeyDialog(rootfs, home, cfg, env));
     }
 
@@ -264,6 +316,7 @@ public class MainActivity extends Activity {
                 "-b", "/dev",                           // 绑定宿主设备（PTY 需要 /dev/ptmx）
                 "-b", "/proc",
                 "-b", "/sys",
+                "-b", "/storage/emulated/0:/sdcard",   // 手机共享存储
                 "-w", "/root",                          // 初始工作目录
                 "/bin/sh", "-c", "/usr/bin/pty-bridge /bin/sh /root/entry.sh"
         };
