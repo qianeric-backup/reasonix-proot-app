@@ -1,0 +1,17 @@
+# Reasonix 会话/工具目录
+.reasonix/
+
+# 第三方官方发布物（31MB 静态二进制，不随源码仓库分发）
+reasonix-linux-arm64/
+
+# 敏感配置（含 API key / 机器路径）
+reasonix.toml
+android-app/local.properties
+
+# 构建产物（dist 保留截图，忽略 APK 副本）
+dist/*.apk
+android-app/.gradle/
+android-app/build/
+android-app/app/build/
+android-app/.idea/
+*.iml

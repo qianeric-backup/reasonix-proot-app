@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Reasonix Terminal</title>
+<link rel="stylesheet" href="xterm.css">
+<style>
+  html, body {
+    margin: 0; padding: 0;
+    height: 100%;
+    background: #0d1117;
+    overflow: hidden;
+  }
+  #term {
+    padding: 6px;
+    height: calc(100% - 12px);
+    box-sizing: border-box;
+  }
+  .xterm { height: 100%; }
+  /* 触摸滚动提示条（可选） */
+  #scrollbar-hint {
+    position: fixed; right: 2px; top: 40%;
+    width: 4px; height: 90px;
+    background: rgba(88,166,255,0.35);
+    border-radius: 2px;
+    pointer-events: none;
+    z-index: 10;
+    display: none;
+  }
+</style>
+</head>
+<body>
+<div id="term"></div>
+<div id="scrollbar-hint"></div>
+<script src="xterm.js"></script>
+<script src="addon-fit.js"></script>
+<script>
+  var term = new Terminal({
+    convertEol: true,
+    cursorBlink: true,
+    fontSize: 13,
+    fontFamily: 'Menlo, Consolas, "DejaVu Sans Mono", monospace',
+    theme: {
+      background: '#0d1117',
+      foreground: '#e6edf3',
+      cursor: '#58a6ff',
+      selectionBackground: '#264f78'
+    },
+    scrollback: 8000
+  });
+  var fitAddon = new FitAddon.FitAddon();
+  term.loadAddon(fitAddon);
+  term.open(document.getElementById('term'));
+  term.focus();
+
+  // Java -> JS：追加进程输出
+  window.onTermData = function (d) {
+    if (d && d.length) term.write(d);
+  };
+
+  // JS -> Java：键盘输入
+  term.onData(function (d) {
+    if (window.Android && window.Android.write) {
+      try { Android.write(d); } catch (e) {}
+    }
+  });
+
+  // 终端尺寸变化 -> 同步 PTY 窗口大小（TUI 布局依赖）
+  term.onResize(function (dims) {
+    if (window.Android && window.Android.resize) {
+      try { Android.resize(dims.rows, dims.cols); } catch (e) {}
+    }
+  });
+
+  // 屏幕自适应：让终端填满视口，并按视口计算行列
+  function doFit() {
+    try { fitAddon.fit(); } catch (e) {}
+    if (window.Android && window.Android.reportState) {
+      try {
+        Android.reportState(JSON.stringify({
+          cols: term.cols, rows: term.rows,
+          viewportY: term.buffer.active.viewportY,
+          length: term.buffer.active.length
+        }));
+      } catch (e) {}
+    }
+  }
+  window.addEventListener('resize', doFit);
+  window.addEventListener('orientationchange', function () { setTimeout(doFit, 300); });
+  // 字体/布局就绪后再 fit 几次，确保尺寸准确
+  setTimeout(doFit, 100);
+  setTimeout(doFit, 400);
+  setTimeout(doFit, 1200);
+
+  // ---- 触摸滚动：浏览历史输出 ----
+  var touchStartY = null;
+  var touchMoved = false;
+  var wheelSent = false;
+  var termEl = document.getElementById('term');
+  termEl.addEventListener('touchstart', function (e) {
+    touchStartY = e.touches[0].clientY;
+    touchMoved = false;
+  }, { passive: true });
+  termEl.addEventListener('touchmove', function (e) {
+    if (touchStartY === null) return;
+    var dy = e.touches[0].clientY - touchStartY;
+    touchStartY = e.touches[0].clientY;
+    if (Math.abs(dy) < 6) return;
+    touchMoved = true;
+    var inAlt = term.buffer.active.type === 'alternate';
+    if (inAlt && window.Android && window.Android.write) {
+      // TUI（alt screen）无 scrollback：reasonix 开启了 SGR 鼠标追踪，
+      // 把滑动模拟成鼠标滚轮事件，由 reasonix 自己滚动历史输出。
+      var step = 8;
+      var acc = dy;
+      while (Math.abs(acc) >= step) {
+        var dir = acc > 0 ? 64 : 65;   // SGR: 64=wheel up, 65=wheel down
+        acc -= (acc > 0 ? 1 : -1) * step;
+        try { Android.write('\u001b[<' + dir + ';20;20M'); } catch (err) {}
+      }
+      if (!wheelSent) {
+        wheelSent = true;
+        if (window.Android && window.Android.reportState) {
+          try { Android.reportState('wheel-mode'); } catch (err) {}
+        }
+      }
+    } else {
+      // 主屏（shell）：滚动 xterm scrollback 浏览历史输出
+      if (dy > 0) {
+        term.scrollLines(-Math.max(1, Math.ceil(Math.abs(dy) / 8)));
+      } else {
+        term.scrollLines(Math.max(1, Math.ceil(Math.abs(dy) / 8)));
+      }
+    }
+  }, { passive: true });
+  termEl.addEventListener('touchend', function () {
+    touchStartY = null;
+    // 轻点（未滑动）时聚焦并回到底部
+    if (!touchMoved) {
+      term.focus();
+      term.scrollToBottom();
+    } else if (window.Android && window.Android.reportState) {
+      try {
+        Android.reportState(JSON.stringify({
+          cols: term.cols, rows: term.rows,
+          viewportY: term.buffer.active.viewportY,
+          length: term.buffer.active.length
+        }));
+      } catch (e) {}
+    }
+    touchMoved = false;
+  }, { passive: true });
+
+  // 通知 Java 终端已就绪
+  if (window.Android && window.Android.onReady) {
+    try { Android.onReady(); } catch (e) {}
+  }
+</script>
+</body>
+</html>
