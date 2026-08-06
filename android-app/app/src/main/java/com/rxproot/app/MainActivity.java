@@ -4,6 +4,7 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -26,6 +27,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Reasonix Proot —— 在 Android 上通过 proot 运行 Alpine Linux 环境，
@@ -72,6 +75,7 @@ public class MainActivity extends Activity {
         webView.addJavascriptInterface(this, "Android");
         setContentView(webView);
         webView.loadUrl("file:///android_asset/web/index.html");
+        requestStoragePermission();
     }
 
     /** 请求运行时存储权限（媒体文件；Android 13+ 用 READ_MEDIA_*） */
@@ -93,31 +97,66 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        // API 30+ 的"所有文件访问"（MANAGE_EXTERNAL_STORAGE）：非媒体文件（文档/下载等）
-        // 需要用户在系统设置里授权；从设置页返回时检查并提示。
-        if (Build.VERSION.SDK_INT >= 30 && !Environment.isExternalStorageManager()) {
-            boolean asked = getSharedPreferences("prefs", MODE_PRIVATE)
-                    .getBoolean("storage_asked", false);
-            if (asked) {
+        SharedPreferences prefs = getSharedPreferences("prefs", MODE_PRIVATE);
+
+        // API 30+ 的"所有文件访问"（MANAGE_EXTERNAL_STORAGE）：让 reasonix 能读写
+        // /sdcard 任意位置（文档、下载、非媒体等）。首次启动引导授权；检测到授权状态
+        // 从"未授权"变为"已授权"时自动重启 Linux 环境使 FUSE 权限生效。
+        if (Build.VERSION.SDK_INT >= 30) {
+            boolean managed = Environment.isExternalStorageManager();
+            boolean wasManaged = prefs.getBoolean("storage_managed", false);
+            prefs.edit().putBoolean("storage_managed", managed).apply();
+            if (managed && !wasManaged) {
+                pushOutput("\r\n[存储权限已生效，正在重启 Linux 环境...]\r\n");
+                restartEnvironment();
+            } else if (!managed && !prefs.getBoolean("storage_guided", false)) {
+                prefs.edit().putBoolean("storage_guided", true).apply();
                 new AlertDialog.Builder(this)
                         .setTitle("存储权限")
-                        .setMessage("如需让 reasonix 访问手机全部文件（文档、下载、非媒体等），请授予\"所有文件访问\"权限。")
-                        .setPositiveButton("去授权", (d, w) -> {
-                            try {
-                                startActivity(new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-                                        Uri.parse("package:" + getPackageName())));
-                            } catch (Exception e) {
-                                try {
-                                    startActivity(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION));
-                                } catch (Exception e2) {
-                                    Log.w(TAG, "cannot open manage-all-files settings", e2);
-                                }
-                            }
-                        })
+                        .setMessage("reasonix 需要\"所有文件访问\"权限才能读写手机存储的任意位置（文档、下载、非媒体文件等）。\n\n未授权时仅可访问公共媒体目录。")
+                        .setPositiveButton("去授权", (d, w) -> openManageAllFilesSettings())
                         .setNegativeButton("暂不", null)
                         .show();
             }
         }
+    }
+
+    /** 打开"所有文件访问"系统设置页 */
+    private void openManageAllFilesSettings() {
+        try {
+            startActivity(new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                    Uri.parse("package:" + getPackageName())));
+        } catch (Exception e) {
+            try {
+                startActivity(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION));
+            } catch (Exception e2) {
+                Log.w(TAG, "cannot open manage-all-files settings", e2);
+            }
+        }
+    }
+
+    /** 杀掉 proot 进程并重启整个 Linux 环境（MANAGE_EXTERNAL_STORAGE 授权后调用，使 FUSE 权限生效） */
+    private void restartEnvironment() {
+        if (!environmentStarted) return;   // 环境尚未启动，无需重启（正常流程会启动）
+        new Thread(() -> {
+            try {
+                if (prootProcess != null) {
+                    prootProcess.destroy();
+                    prootProcess = null;
+                }
+                startEnvironment();
+            } catch (Exception e) {
+                Log.e(TAG, "restart failed", e);
+            }
+        }, "env-restart").start();
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int code, String[] perms, int[] results) {
+        super.onRequestPermissionsResult(code, perms, results);
+        // READ_MEDIA 等运行时权限授权结果；MANAGE_EXTERNAL_STORAGE 的授权状态
+        // 在 onResume() 中通过 Environment.isExternalStorageManager() 检测。
+        Log.d(TAG, "permission result code=" + code);
     }
 
     /** 由 xterm.js 调用：把终端按键输入写入子进程 stdin（经 pty-bridge 转发到 PTY） */
@@ -208,7 +247,6 @@ public class MainActivity extends Activity {
             return;
         }
         Log.d(TAG, "reasonix config missing, showing API key dialog");
-        getSharedPreferences("prefs", MODE_PRIVATE).edit().putBoolean("storage_asked", true).apply();
         ui.post(() -> showApiKeyDialog(rootfs, home, cfg, env));
     }
 
@@ -329,17 +367,28 @@ public class MainActivity extends Activity {
         // loader 机制读取装载，不走宿主 execve，天然绕过该限制。
         String nativeLibDir = getApplicationInfo().nativeLibraryDir;
         String proot = nativeLibDir + "/proot.so";
-        String[] cmd = {
-                proot,
-                "-0",                                   // 伪装 root（Alpine 文件属主为 root）
-                "-r", rootfs.getAbsolutePath(),         // 新根目录
-                "-b", "/dev",                           // 绑定宿主设备（PTY 需要 /dev/ptmx）
-                "-b", "/proc",
-                "-b", "/sys",
-                "-b", "/storage/emulated/0:/sdcard",   // 手机共享存储
-                "-w", "/root",                          // 初始工作目录
-                "/bin/sh", "-c", "/usr/bin/pty-bridge /bin/sh /root/entry.sh"
-        };
+        List<String> cmd = new ArrayList<>();
+        cmd.add(proot);
+        cmd.add("-0");                                   // 伪装 root（Alpine 文件属主为 root）
+        cmd.add("-r"); cmd.add(rootfs.getAbsolutePath()); // 新根目录
+        cmd.add("-b"); cmd.add("/dev");                  // 绑定宿主设备（PTY 需要 /dev/ptmx）
+        cmd.add("-b"); cmd.add("/proc");
+        cmd.add("-b"); cmd.add("/sys");
+        cmd.add("-b"); cmd.add("/storage/emulated/0:/sdcard"); // 手机共享存储
+        // 沙箱增强：绑定宿主 app 私有数据目录（可读写）与宿主只读系统分区（放宽读访问）
+        cmd.add("-b"); cmd.add("/data/data/" + getPackageName() + ":/host-data");
+        String ownAndroidData = "/storage/emulated/0/Android/data/" + getPackageName();
+        if (new File(ownAndroidData).exists()) {
+            cmd.add("-b"); cmd.add(ownAndroidData + ":/sdcard/Android/data/" + getPackageName());
+        }
+        String[] hostRo = {"/system", "/product", "/apex"};
+        for (String h : hostRo) {
+            if (new File(h).exists()) {
+                cmd.add("-b"); cmd.add(h + ":/host" + h);
+            }
+        }
+        cmd.add("-w"); cmd.add("/root");                 // 初始工作目录
+        cmd.add("/bin/sh"); cmd.add("-c"); cmd.add("/usr/bin/pty-bridge /bin/sh /root/entry.sh");
         ProcessBuilder pb = new ProcessBuilder(cmd);
         pb.redirectErrorStream(true);
         // proot 需要 execve 它的 loader；loader 放在 nativeLibraryDir（apk_data_file，
