@@ -23,6 +23,13 @@ if [ ! -e /root/.reasonix-welcome ]; then
   touch /root/.reasonix-welcome
 fi
 
+# reasonix bash 沙箱兜底：Android 无 bubblewrap（bwrap），enforce 会拒绝所有 shell 命令，
+# 每次启动确保 [sandbox] bash = "off"（Java 端 ensureSandboxDisabled 已预置，此处防配置被改）。
+CONF="$HOME/.config/reasonix/config.toml"
+if [ -f "$CONF" ] && grep -q 'bash *= *"enforce"' "$CONF" 2>/dev/null; then
+    sed -i 's/bash *= *"enforce"/bash = "off"/' "$CONF" 2>/dev/null
+fi
+
 # 直接进入 reasonix 交互会话；退出后落到 shell
 if command -v reasonix >/dev/null 2>&1; then
   reasonix

@@ -241,6 +241,10 @@ public class MainActivity extends Activity {
         File home = new File(rootfs, "root/.reasonix");
         File cfg = new File(home, "config.toml");
         File env = new File(home, ".env");
+        // reasonix 1.16+ 默认 [sandbox] bash = "enforce" 需要 bubblewrap（bwrap），
+        // Android proot 环境无 bwrap 且 user namespace 被禁用 → 所有 shell 命令被拒。
+        // 预置 ~/.config/reasonix/config.toml 将 bash 沙箱关闭。
+        ensureSandboxDisabled(rootfs);
         if (cfg.exists() && env.exists()) {
             Log.d(TAG, "reasonix config already present, skipping dialog");
             safeStartProot();
@@ -248,6 +252,30 @@ public class MainActivity extends Activity {
         }
         Log.d(TAG, "reasonix config missing, showing API key dialog");
         ui.post(() -> showApiKeyDialog(rootfs, home, cfg, env));
+    }
+
+    /** 确保 reasonix 的 bash 沙箱关闭（Android 无 bubblewrap，enforce 会拒绝所有 shell 命令） */
+    private void ensureSandboxDisabled(File rootfs) {
+        try {
+            File conf = new File(new File(rootfs, "root/.config/reasonix"), "config.toml");
+            conf.getParentFile().mkdirs();
+            String content = conf.exists()
+                    ? new String(java.nio.file.Files.readAllBytes(conf.toPath()), StandardCharsets.UTF_8)
+                    : "";
+            if (content.contains("bash = \"off\"")) {
+                Log.d(TAG, "reasonix sandbox already disabled");
+                return;
+            }
+            if (content.contains("bash =")) {
+                content = content.replaceAll("bash\\s*=\\s*\"[a-z]*\"", "bash = \"off\"");
+            } else {
+                content += "\n[sandbox]\nbash = \"off\"\n";
+            }
+            java.nio.file.Files.write(conf.toPath(), content.getBytes(StandardCharsets.UTF_8));
+            Log.d(TAG, "reasonix sandbox bash disabled: " + conf.getAbsolutePath());
+        } catch (Exception e) {
+            Log.w(TAG, "failed to disable reasonix sandbox", e);
+        }
     }
 
     private void showApiKeyDialog(final File rootfs, final File home, final File cfg, final File env) {
