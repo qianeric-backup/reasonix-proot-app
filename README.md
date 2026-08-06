@@ -4,12 +4,6 @@
 
 无需 root，无需安装 Termux。仅支持 **arm64 (arm64-v8a)** 设备。
 
-## 效果
-
-| Reasonix TUI（运行中） | 桌面图标（2.JPG） |
-| --- | --- |
-| ![reasonix-tui](dist/reasonix-final.png) | ![launcher-icon](dist/launcher-icon.png) |
-
 ## 功能特性
 
 - **一键进入 Reasonix**：打开 APK → 自动解压 Alpine Linux → 直接启动 reasonix 交互会话；退出后落到 Alpine shell。
@@ -70,12 +64,6 @@ adb install reasonix-proot.apk
 1. 首次打开：自动解压 Linux 环境（约 30 秒）→ 进入 reasonix。
 2. 首次使用：在终端运行 `reasonix setup` 配置 Provider 与 API key（需联网）。
 3. 退出 reasonix 后自动回到 Alpine shell；输入 `exit` 关闭。
-
-## 运行截图
-
-| 启动横幅 | reasonix TUI |
-| --- | --- |
-| ![boot](dist/reasonix-tui-screenshot.png) | ![tui](dist/tui-fit-check.png) |
 
 ## 已知限制
 
