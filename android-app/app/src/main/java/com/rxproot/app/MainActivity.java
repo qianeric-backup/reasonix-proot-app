@@ -29,6 +29,7 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Reasonix Proot —— 在 Android 上通过 proot 运行 Alpine Linux 环境，
@@ -136,19 +137,35 @@ public class MainActivity extends Activity {
     }
 
     /** 杀掉 proot 进程并重启整个 Linux 环境（MANAGE_EXTERNAL_STORAGE 授权后调用，使 FUSE 权限生效） */
-    private void restartEnvironment() {
+    private synchronized void restartEnvironment() {
         if (!environmentStarted) return;   // 环境尚未启动，无需重启（正常流程会启动）
         new Thread(() -> {
             try {
-                if (prootProcess != null) {
-                    prootProcess.destroy();
-                    prootProcess = null;
-                }
+                killProotTree();
                 startEnvironment();
             } catch (Exception e) {
                 Log.e(TAG, "restart failed", e);
             }
         }, "env-restart").start();
+    }
+
+    /** 杀掉 proot 及其残留的 guest 进程（pty-bridge/reasonix 是 proot 子进程，
+     *  proot 被杀后若不清除会残留成孤儿，导致多套环境并存） */
+    private void killProotTree() {
+        try {
+            if (prootProcess != null) {
+                prootProcess.destroy();
+                prootProcess = null;
+            }
+            // 同 uid 下 kill 同 uid 进程是允许的；按进程名精确匹配，不会误伤其他应用
+            Process p = new ProcessBuilder("sh", "-c",
+                    "for pid in $(ps -A -o PID,NAME 2>/dev/null | grep -E 'proot.so|pty-bridge|reasonix' | awk '{print $1}'); " +
+                    "do kill -9 $pid 2>/dev/null; done")
+                    .redirectErrorStream(true).start();
+            if (!p.waitFor(3, TimeUnit.SECONDS)) p.destroy();
+        } catch (Exception e) {
+            Log.w(TAG, "kill tree failed", e);
+        }
     }
 
     @Override

@@ -30,6 +30,18 @@ if [ -f "$CONF" ] && grep -q 'bash *= *"enforce"' "$CONF" 2>/dev/null; then
     sed -i 's/bash *= *"enforce"/bash = "off"/' "$CONF" 2>/dev/null
 fi
 
+# Alpine 无 bash；创建 bash -> busybox ash(sh) 包装，让 reasonix 探测到 bash 时
+# 实际用 sh 执行命令（arm64/Alpine 兼容）。幂等：已存在则跳过。
+if [ ! -e /usr/local/bin/bash ]; then
+    cat > /usr/local/bin/bash <<'SH'
+#!/bin/sh
+# bash 兼容包装：以 busybox ash 解释执行（POSIX 兼容）
+exec /bin/busybox ash "$@"
+SH
+    chmod 755 /usr/local/bin/bash
+fi
+[ -e /bin/bash ] || ln -sf /usr/local/bin/bash /bin/bash
+
 # 直接进入 reasonix 交互会话；退出后落到 shell
 if command -v reasonix >/dev/null 2>&1; then
   reasonix
