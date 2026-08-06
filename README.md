@@ -6,7 +6,7 @@
 
 ## 效果
 
-| Reasonix TUI（运行中） | 桌面图标 |
+| Reasonix TUI（运行中） | 桌面图标（2.JPG） |
 | --- | --- |
 | ![reasonix-tui](dist/reasonix-final.png) | ![launcher-icon](dist/launcher-icon.png) |
 
