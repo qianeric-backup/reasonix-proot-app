@@ -24,6 +24,7 @@ import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -148,11 +149,12 @@ public class MainActivity extends Activity {
         connPort.setInputType(InputType.TYPE_CLASS_NUMBER);
         connPort.setHint("连接端口（无线调试界面显示，如 37500；留空则用 5555）");
         TextView tip = new TextView(this);
-        tip.setText("本机 IP：" + ip + "\n\n"
+        tip.setText("本机 IP：" + ip + "（已写入 guest，启动时自动扫描端口重连）\n\n"
                 + "1. 手机：设置 -> 开发者选项 -> 无线调试 -> 打开，抄下配对码与两个端口\n"
-                + "2. 在上方填写后点「发送到终端」（自动执行配对+连接+检查）\n"
+                + "2. 首次使用：填写配对端口+配对码点「发送到终端」（自动配对+连接+检查）\n"
+                + "3. 之后免配对：点「自动连接」自动扫描端口并直连（无需填连接端口）\n"
                 + "   提示：发送前请在 reasonix 中输入 exit 退到 shell\n"
-                + "3. 或点「复制命令」自行粘贴执行\n\n"
+                + "4. 或点「复制命令」自行粘贴执行\n\n"
                 + "连接成功后即可 adb shell / adb install 等操作本手机。");
         tip.setTextColor(0xFFCCCCCC);
         tip.setTextSize(12);
@@ -164,6 +166,11 @@ public class MainActivity extends Activity {
         panel.addView(pairPort);
         panel.addView(pairCode);
         panel.addView(connPort);
+        // 自动连接按钮：触发 guest 内 adb-autoconnect（扫描 30000-49999 并 connect）
+        Button autoBtn = new Button(this);
+        autoBtn.setText("自动连接（扫描端口并直连）");
+        autoBtn.setOnClickListener(v -> sendToTerminal("adb-autoconnect\n"));
+        panel.addView(autoBtn);
         new AlertDialog.Builder(this)
                 .setTitle("ADB 无线调试")
                 .setView(panel)
@@ -615,6 +622,7 @@ public class MainActivity extends Activity {
                 Log.d(TAG, "environment already installed, refreshing runtime assets");
                 refreshAssets(files, rootfs);
             }
+            writeAdbIpFile(rootfs);
             ensureReasonixConfig(rootfs);
         } catch (Exception e) {
             Log.e(TAG, "startEnvironment failed", e);
@@ -747,6 +755,22 @@ public class MainActivity extends Activity {
         extractAsset("root/entry.sh", entry);
         entry.setExecutable(true, false);
         Log.d(TAG, "runtime assets refreshed");
+    }
+
+    /** ADB 无线调试持久化：把本机局域网 IP 写入 guest 持久文件，供 entry.sh 自动重连使用 */
+    private void writeAdbIpFile(File rootfs) {
+        try {
+            String ip = getLocalIpAddress();
+            if (ip == null) {
+                Log.w(TAG, "no local IP, skip adb_ip");
+                return;
+            }
+            File f = new File(rootfs, "root/.adb_ip");
+            java.nio.file.Files.write(f.toPath(), ip.getBytes(StandardCharsets.UTF_8));
+            Log.d(TAG, "adb_ip written: " + ip);
+        } catch (Exception e) {
+            Log.w(TAG, "writeAdbIpFile failed", e);
+        }
     }
 
     /** 首次启动：解压 Alpine rootfs、部署 proot/pty-bridge/reasonix/启动脚本 */

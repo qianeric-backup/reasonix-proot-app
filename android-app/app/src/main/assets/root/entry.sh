@@ -70,6 +70,48 @@ EOF
     ) &
 fi
 
+# --- ADB 无线调试持久化（adb-无线调试持久化总结.md v2）---
+# 1) 预置 adb 日志路径：否则首次 adb 必然崩溃且无报错输出
+export ANDROID_ADB_LOG_PATH=/tmp/adb.log
+if command -v adb >/dev/null 2>&1; then
+    mkdir -p ~/.android
+    # 6) 密钥完整性校验：adbkey 丢失会退回"每次都要配对"，缺失则重新生成。
+    #    adbkey 持久化于 /root/.android（rootfs 持久），密钥不变 → 免配对直连。
+    if [ ! -f ~/.android/adbkey ]; then
+        adb keygen ~/.android/adbkey >/dev/null 2>&1 || true
+        echo "[adb] 已生成 adbkey（持久化于 /root/.android）"
+    fi
+    # 3) 端口自动发现工具：扫描 30000-49999 找无线调试连接端口（mDNS 在容器不可用）
+    cat > /usr/local/bin/adb-autoconnect <<'SH'
+#!/bin/sh
+# 自动发现无线调试端口并连接（adb-无线调试持久化总结.md）
+[ -f /root/.adb_ip ] || { echo "无 /root/.adb_ip（请重开应用）"; exit 1; }
+HOST_IP=$(cat /root/.adb_ip)
+case "$HOST_IP" in
+    *.*.*.*) : ;;
+    *) echo "IP 无效: $HOST_IP"; exit 1 ;;
+esac
+# 已有 device 直接复用（免配对直连）
+if adb devices 2>/dev/null | awk 'NR>1 && $2=="device" {f=1} END{exit !f}'; then
+    echo "[adb] 已连接 $HOST_IP（免配对直连）"
+    adb devices -l
+    exit 0
+fi
+echo "扫描 $HOST_IP:30000-49999 ...（约 10-40 秒）"
+PORT=$(seq 30000 49999 | xargs -P 100 -I{} sh -c 'nc -z -w1 '"$HOST_IP"' {} >/dev/null 2>&1 && echo {}' 2>/dev/null | sort -n | head -1)
+if [ -z "$PORT" ]; then
+    echo "未找到开放端口。请确认手机已开启「无线调试」且与本机同 Wi-Fi。"
+    exit 1
+fi
+echo "发现端口 $PORT，连接中 ..."
+adb connect "$HOST_IP:$PORT"
+adb devices -l
+SH
+    chmod 755 /usr/local/bin/adb-autoconnect
+    # 5) 启动即自动重连：后台静默执行（不阻塞 reasonix 启动）
+    ( sleep 4; adb-autoconnect >/tmp/adb-auto.log 2>&1 || true ) &
+fi
+
 # 直接进入 reasonix 交互会话；退出后落到 shell
 if command -v reasonix >/dev/null 2>&1; then
   reasonix
