@@ -11,19 +11,26 @@
 - **真实 TTY**：内置自编译 `pty-bridge`（静态 musl）创建 PTY，reasonix 的 TUI 完整可用（含鼠标滚轮滚动）。
 - **屏幕自适应**：终端按手机视口自动计算行列并实时同步 PTY（旋转/软键盘自动重排）。
 - **触摸滚动**：reasonix TUI 内滑动 → 模拟 SGR 滚轮事件滚动历史输出；shell 主屏滑动 → 滚动终端 scrollback。
+- **纯黑主题**：全局纯黑界面（标题栏 / 侧滑菜单 / 终端 / 对话框）。
+- **左侧侧滑配置菜单**（DrawerLayout）：
+  - **ADB 无线调试**：guest 内自动安装 adb（国内镜像 + 国内 DNS），填写配对码/端口后一键发送配对连接命令到终端，或复制命令、直接跳转无线调试设置。
+  - **API Key 配置**：随时查看/修改 DeepSeek API Key（写入 `~/.reasonix/.env`，保存后自动重启环境）。
+  - **更新 resonix**：从官方 npm 包（`@reasonix/cli-linux-arm64`，npmmirror 国内镜像）下载 tgz 解压更新，或从手机选择新版文件、恢复内置版本。
 - **离线打包**：Alpine rootfs、proot、reasonix、xterm.js 全部内置，首次启动解压后无需网络（reasonix 调用 API 时才需联网）。
-- **手机存储访问**：首次启动请求存储权限；guest 内 `/sdcard` 直接映射手机共享存储，reasonix
-  可读写照片/文档/下载等（Android 13+ 非媒体文件需在系统设置授予"所有文件访问"）。
+- **手机存储访问**：guest 内 `/sdcard` 直接映射手机共享存储；首次启动引导"所有文件访问"授权（授权后自动重启环境生效），并可读写宿主 app 私有数据（`/host-data`）与只读系统分区（`/host/system` 等）。
+- **bash 兼容**：Alpine 无 bash，内置 `bash → busybox ash(sh)` 包装，reasonix 的 shell 命令可直接执行；同时关闭 reasonix 的 OS 沙箱（Android 无 bubblewrap）。
 
 ## 架构
 
 ```
 ┌──────────────────────────────────────────────────────┐
 │ Android App (com.rxproot.app)                        │
+│   DrawerLayout（侧滑配置菜单）                        │
 │   WebView ── xterm.js 终端模拟器（自适应 + 触摸滚动） │
 │        │  JS <-> Java 桥（键盘/尺寸/滚轮）            │
-│   proot.so（自编译静态 musl PIE，直接 exec）          │
+│   proot.so（termux fork 5.1.107.89，静态 musl PIE）   │
 │     -0 -r <rootfs> -b /dev -b /proc -b /sys          │
+│        -b /sdcard -b /host-data -b /host/*           │
 │        │  PROOT_LOADER=<nativeLibDir>/loader.so      │
 │   Alpine Linux 3.20 (arm64 minirootfs)               │
 │     /usr/bin/pty-bridge ── 创建 PTY                  │
@@ -35,11 +42,11 @@
 
 | 组件 | 说明 |
 | --- | --- |
-| `lib/arm64-v8a/proot.so` | 自编译 proot 5.4.0（zig 交叉编译，musl 静态 PIE，2.4MB），内置最小 talloc 兼容层 |
-| `lib/arm64-v8a/loader.so` | proot 的 ELF loader（9KB 静态），由 `PROOT_LOADER` 指定，绕过 SELinux execve 限制 |
-| `assets/rootfs.tar` | Alpine 3.20.10 arm64 minirootfs（gzip，首次启动用系统 toybox tar 解压） |
+| `lib/arm64-v8a/proot.so` | termux 维护的 proot 5.1.107.89（zig 交叉编译，musl 静态 PIE），修复 Android app 环境 accept/accept4 被 seccomp 拦截的问题 |
+| `lib/arm64-v8a/loader.so` | termux proot 配套 loader（静态，链接脚本固定 `0x2000000000`），由 `PROOT_LOADER` 指定，绕过 SELinux execve 限制 |
+| `assets/rootfs.tar` | Alpine 3.20 arm64 minirootfs（gzip，首次启动用系统 toybox tar 解压） |
 | `assets/usr/bin/pty-bridge` | 自编译静态 musl PIE，guest 内创建 PTY（`posix_openpt`+`fork`） |
-| `assets/usr/bin/reasonix` | 静态链接 Go 二进制（来自官方 release，未随仓库分发，见下） |
+| `assets/usr/bin/reasonix` | 静态链接 Go 二进制（来自官方 npm 平台包 `@reasonix/cli-linux-arm64`，可在应用内一键更新） |
 | `assets/web/*` | xterm.js 5.3.0 + fit addon（离线终端渲染） |
 
 ## 构建
@@ -65,18 +72,28 @@ adb install reasonix-proot.apk
 
 1. 首次打开：自动解压 Linux 环境（约 30 秒）→ **弹出 API Key 配置对话框**，填入 DeepSeek
    API Key（platform.deepseek.com 获取）点击"保存并启动"，即可直接进入 reasonix 会话。
-2. 已配置过则直接进入；如需更换 Key，在终端运行 `reasonix setup` 或删除
-   应用数据后重开。
+2. 已配置过则直接进入；随时可在 **侧滑菜单 → API Key 配置** 修改。
 3. 退出 reasonix 后自动回到 Alpine shell；输入 `exit` 关闭。
+
+### ADB 无线调试（用 guest 内 adb 调试本手机）
+
+1. 手机：设置 → 开发者选项 → 无线调试 → 打开，记下配对码与配对/连接端口。
+2. 侧滑菜单 → **ADB 无线调试** → 填入配对码/端口 → **发送到终端**（先输入 `exit` 退到 shell）。
+3. 自动执行 `adb pair` + `adb connect` + `adb devices`，连接成功即可 `adb shell` / `adb install`。
+
+### 更新 resonix
+
+侧滑菜单 → **更新 resonix** → 网络更新（默认官方 npm 源，可改 URL 指定版本）或从手机选择新版文件。
 
 ## 已知限制
 
 - 仅 arm64 设备；x86 模拟器无法运行。
-- DNS 使用内置 `resolv.conf`（8.8.8.8 / 1.1.1.1）。
+- DNS 使用国内公共 DNS（223.5.5.5 / 119.29.29.29）。
 - 应用私有目录（`files/rootfs`）在卸载时清除。
 - TUI 内滑动滚动依赖 reasonix 的 SGR 鼠标追踪（已启用）。
+- Android 11+ 无法访问其他应用的 `Android/data` 目录（系统硬限制）。
 
 ## 许可证
 
-MIT — 见 `android-app/README.md` 顶部说明。第三方组件版权归其各自作者所有：
-[Reasonix](https://github.com/esengine/DeepSeek-Reasonix)（MIT）、[proot](https://github.com/proot-me/proot)（GPL-2.0）、Alpine Linux（GPL）、[xterm.js](https://github.com/xtermjs/xterm.js)（MIT）。
+MIT。第三方组件版权归其各自作者所有：
+[Reasonix](https://github.com/esengine/DeepSeek-Reasonix)（MIT）、[proot](https://github.com/termux/proot)（GPL-2.0）、Alpine Linux（GPL）、[xterm.js](https://github.com/xtermjs/xterm.js)（MIT）。
