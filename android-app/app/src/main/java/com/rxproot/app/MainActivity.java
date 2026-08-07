@@ -23,20 +23,24 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.EditText;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.FileInputStream;
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.zip.GZIPInputStream;
 
 import androidx.core.view.GravityCompat;
 import androidx.drawerlayout.widget.DrawerLayout;
@@ -53,6 +57,9 @@ public class MainActivity extends Activity {
 
     private static final String TAG = "ReasonixProot";
     private static final int REQ_UPDATE_RESONIX = 200;
+    /** 官方更新源：@reasonix/cli-linux-arm64（npm 平台二进制包，npmmirror 国内镜像） */
+    private static final String REASONIX_DEFAULT_URL =
+            "https://registry.npmmirror.com/@reasonix/cli-linux-arm64/-/cli-linux-arm64-1.21.1.tgz";
 
     private WebView webView;
     private Process prootProcess;
@@ -217,15 +224,29 @@ public class MainActivity extends Activity {
 
     /** 更新 resonix：从手机选择新版文件，或恢复内置版本 */
     private void showUpdateResonixDialog() {
+        EditText urlInput = new EditText(this);
+        urlInput.setSingleLine(true);
+        urlInput.setHint("reasonix 更新包链接 (.tgz)");
+        urlInput.setText(REASONIX_DEFAULT_URL);
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        int pad = (int) (16 * getResources().getDisplayMetrics().density);
+        panel.setPadding(pad, 8, pad, 0);
+        TextView tip = new TextView(this);
+        tip.setText("官方源：@reasonix/cli-linux-arm64（npm 平台包）\n"
+                + "可修改下方链接更新到其它版本。\n"
+                + "或从手机选择新版文件 / 恢复内置版本。");
+        tip.setTextColor(0xFFCCCCCC);
+        panel.addView(tip);
+        panel.addView(urlInput);
         new AlertDialog.Builder(this)
                 .setTitle("更新 resonix")
-                .setMessage("选择更新方式：\n\n"
-                        + "1. 从手机选择新版 resonix 文件（推荐）：\n"
-                        + "   将新版二进制放到手机，点下方「选择文件」\n\n"
-                        + "2. 恢复内置版本：\n"
-                        + "   从 APK 自带版本覆盖（用于误更新后还原）\n\n"
-                        + "更新后会自动重启 Linux 环境。")
-                .setPositiveButton("选择文件", (d, w) -> {
+                .setView(panel)
+                .setPositiveButton("网络更新", (d, w) -> {
+                    String url = urlInput.getText().toString().trim();
+                    if (!url.isEmpty()) updateFromNetwork(url);
+                })
+                .setNeutralButton("选择文件", (d, w) -> {
                     try {
                         Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
                         i.addCategory(Intent.CATEGORY_OPENABLE);
@@ -235,9 +256,98 @@ public class MainActivity extends Activity {
                         Log.e(TAG, "open document failed", e);
                     }
                 })
-                .setNeutralButton("恢复内置", (d, w) -> restoreBundledResonix())
-                .setNegativeButton("取消", null)
+                .setNegativeButton("恢复内置", (d, w) -> restoreBundledResonix())
                 .show();
+    }
+
+    /** 从网络下载 reasonix 更新包（tar.gz），解压提取二进制并覆盖 guest 内版本 */
+    private void updateFromNetwork(String url) {
+        new Thread(() -> {
+            try {
+                pushOutput("\r\n[正在下载 resonix 更新包...]\r\n");
+                File tmp = new File(getCacheDir(), "reasonix-update.tgz");
+                long total = 0;
+                try (InputStream in = new URL(url).openStream();
+                     FileOutputStream out = new FileOutputStream(tmp)) {
+                    byte[] buf = new byte[65536];
+                    int n;
+                    while ((n = in.read(buf)) > 0) {
+                        out.write(buf, 0, n);
+                        total += n;
+                    }
+                }
+                Log.d(TAG, "downloaded " + total + " bytes");
+                pushOutput("\r\n[下载完成 (" + (total / 1024 / 1024) + " MB)，正在解压...]\r\n");
+                File rootfs = new File(getFilesDir(), "rootfs");
+                File rx = new File(new File(rootfs, "usr/local/bin"), "reasonix");
+                rx.getParentFile().mkdirs();
+                try (GZIPInputStream gz = new GZIPInputStream(new FileInputStream(tmp));
+                     FileOutputStream out = new FileOutputStream(rx)) {
+                    extractTarMember(gz, out, "package/bin/reasonix");
+                }
+                rx.setExecutable(true, false);
+                tmp.delete();
+                pushOutput("\r\n[resonix 已更新（" + rx.length() + " 字节），正在重启环境...]\r\n");
+                restartEnvironment();
+            } catch (Exception e) {
+                pushOutput("\r\n[更新失败] " + e + "\r\n");
+                Log.e(TAG, "network update failed", e);
+            }
+        }, "rx-update").start();
+    }
+
+    /** 从 tar 流中提取指定成员（tar 512 字节块格式；gzip 已解压） */
+    private void extractTarMember(InputStream in, OutputStream out, String targetName) throws IOException {
+        byte[] header = new byte[512];
+        boolean found = false;
+        while (true) {
+            int read = readFully(in, header);
+            if (read < 512) break;              // 结束
+            if (allZero(header)) break;         // 两个空块结束
+            String name = new String(header, 0, 100, StandardCharsets.UTF_8).replace("\0", "").trim();
+            long size = 0;
+            String sizeStr = new String(header, 124, 12, StandardCharsets.US_ASCII).trim();
+            try {
+                size = Long.parseLong(sizeStr, 8);
+            } catch (Exception ignored) {}
+            if (name.equals(targetName)) {
+                byte[] data = new byte[(int) size];
+                readFully(in, data);
+                out.write(data);
+                found = true;
+                break;
+            } else {
+                // 跳过数据块（512 对齐）
+                long skip = (size + 511) / 512 * 512;
+                skipFully(in, skip);
+            }
+        }
+        if (!found) throw new IOException("tar 内未找到 " + targetName);
+    }
+
+    private int readFully(InputStream in, byte[] buf) throws IOException {
+        int off = 0;
+        while (off < buf.length) {
+            int n = in.read(buf, off, buf.length - off);
+            if (n < 0) break;
+            off += n;
+        }
+        return off;
+    }
+
+    private void skipFully(InputStream in, long n) throws IOException {
+        long remaining = n;
+        byte[] buf = new byte[8192];
+        while (remaining > 0) {
+            int c = in.read(buf, 0, (int) Math.min(buf.length, remaining));
+            if (c < 0) break;
+            remaining -= c;
+        }
+    }
+
+    private boolean allZero(byte[] b) {
+        for (byte x : b) if (x != 0) return false;
+        return true;
     }
 
     /** 从 APK assets 恢复内置 reasonix */
