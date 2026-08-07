@@ -20,16 +20,23 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.EditText;
+import android.widget.TextView;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.InetAddress;
+import java.net.NetworkInterface;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+
+import androidx.core.view.GravityCompat;
+import androidx.drawerlayout.widget.DrawerLayout;
 
 /**
  * Reasonix Proot —— 在 Android 上通过 proot 运行 Alpine Linux 环境，
@@ -48,6 +55,8 @@ public class MainActivity extends Activity {
     private OutputStream procIn;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private volatile boolean environmentStarted = false;
+    private DrawerLayout drawerLayout;
+    private TextView tvStatus;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -72,11 +81,163 @@ public class MainActivity extends Activity {
             }
         });
 
+        setContentView(R.layout.activity_main);
+
+        drawerLayout = findViewById(R.id.drawer_layout);
+        tvStatus = findViewById(R.id.tv_status);
+        webView = findViewById(R.id.webview);
+        WebSettings ws = webView.getSettings();
+        ws.setJavaScriptEnabled(true);
+        ws.setAllowFileAccess(true);
+        ws.setDomStorageEnabled(true);
+        ws.setCacheMode(WebSettings.LOAD_NO_CACHE);
+
         // JS -> Java 桥（键盘输入）
         webView.addJavascriptInterface(this, "Android");
-        setContentView(webView);
+        webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                if (!environmentStarted) {
+                    environmentStarted = true;
+                    new Thread(MainActivity.this::startEnvironment).start();
+                }
+            }
+        });
         webView.loadUrl("file:///android_asset/web/index.html");
+
+        // 标题栏菜单按钮：打开侧滑配置列表
+        findViewById(R.id.btn_menu).setOnClickListener(v -> drawerLayout.openDrawer(GravityCompat.START));
+        // 侧滑菜单功能
+        findViewById(R.id.menu_adb).setOnClickListener(v -> { drawerLayout.closeDrawers(); showAdbDialog(); });
+        findViewById(R.id.menu_apikey).setOnClickListener(v -> { drawerLayout.closeDrawers(); showApiKeyConfigDialog(); });
+        findViewById(R.id.menu_cli).setOnClickListener(v -> { drawerLayout.closeDrawers(); showCliParamsDialog(); });
+
         requestStoragePermission();
+    }
+
+    /* ==================== 侧滑菜单功能 ==================== */
+
+    /** ADB 无线调试：显示局域网 IP 与连接指引 */
+    private void showAdbDialog() {
+        String ip = getLocalIpAddress();
+        StringBuilder msg = new StringBuilder();
+        if (ip != null) {
+            msg.append("本机局域网 IP：").append(ip).append("\n\n");
+        } else {
+            msg.append("未获取到局域网 IP（请连接 Wi-Fi）。\n\n");
+        }
+        msg.append("在电脑上执行：\n")
+           .append("  adb connect ").append(ip != null ? ip : "<IP>").append(":5555\n\n")
+           .append("前提：本机已开启「无线调试」（开发者选项 -> 无线调试），\n")
+           .append("或用数据线执行过一次 adb tcpip 5555。\n\n")
+           .append("Android 11+ 也可直接打开无线调试设置页配对。");
+        new AlertDialog.Builder(this)
+                .setTitle("ADB 无线调试")
+                .setMessage(msg)
+                .setPositiveButton("打开无线调试设置", (d, w) -> {
+                    try {
+                        startActivity(new Intent("android.settings.WIRELESS_DEBUGGING_SETTINGS"));
+                    } catch (Exception e) {
+                        Log.w(TAG, "cannot open wireless debugging settings", e);
+                    }
+                })
+                .setNegativeButton("关闭", null)
+                .show();
+    }
+
+    /** 获取本机局域网 IPv4 地址（遍历网络接口） */
+    private String getLocalIpAddress() {
+        try {
+            for (NetworkInterface ni : Collections.list(NetworkInterface.getNetworkInterfaces())) {
+                if (!ni.isUp() || ni.isLoopback()) continue;
+                for (InetAddress addr : Collections.list(ni.getInetAddresses())) {
+                    byte[] b = addr.getAddress();
+                    if (b.length == 4 && (b[0] & 0xff) != 0) {
+                        String ip = addr.getHostAddress();
+                        if (ip != null && !ip.startsWith("127.")) return ip;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "getLocalIpAddress failed", e);
+        }
+        return null;
+    }
+
+    /** API Key 配置：读取/修改 reasonix 的 DEEPSEEK_API_KEY */
+    private void showApiKeyConfigDialog() {
+        File rootfs = new File(getFilesDir(), "rootfs");
+        File env = new File(new File(rootfs, "root/.reasonix"), ".env");
+        String current = "";
+        if (env.exists()) {
+            try {
+                for (String line : new String(java.nio.file.Files.readAllBytes(env.toPath()), StandardCharsets.UTF_8).split("\n")) {
+                    if (line.startsWith("DEEPSEEK_API_KEY=")) {
+                        current = line.substring("DEEPSEEK_API_KEY=".length()).trim();
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+        EditText input = new EditText(this);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        input.setSingleLine(true);
+        input.setHint("粘贴 DeepSeek API Key");
+        if (!current.isEmpty()) input.setText(current);
+        new AlertDialog.Builder(this)
+                .setTitle("API Key 配置")
+                .setMessage("当前模型：deepseek-v4-flash（api.deepseek.com）")
+                .setView(input)
+                .setPositiveButton("保存", (d, w) -> {
+                    String key = input.getText().toString().trim();
+                    if (key.isEmpty()) return;
+                    try {
+                        env.getParentFile().mkdirs();
+                        java.nio.file.Files.write(env.toPath(),
+                                ("DEEPSEEK_API_KEY=" + key + "\n").getBytes(StandardCharsets.UTF_8));
+                        Log.d(TAG, "API key updated");
+                        pushOutput("\r\n[API Key 已更新，正在重启环境...]\r\n");
+                        restartEnvironment();
+                    } catch (Exception e) {
+                        Log.e(TAG, "save api key failed", e);
+                    }
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    /** CLI 参数：显示 reasonix 当前配置 */
+    private void showCliParamsDialog() {
+        File rootfs = new File(getFilesDir(), "rootfs");
+        File home = new File(rootfs, "root/.reasonix");
+        StringBuilder sb = new StringBuilder();
+        File cfg = new File(home, "config.toml");
+        if (cfg.exists()) {
+            sb.append("--- config.toml ---\n");
+            try {
+                sb.append(new String(java.nio.file.Files.readAllBytes(cfg.toPath()), StandardCharsets.UTF_8));
+            } catch (Exception e) { sb.append("(读取失败)\n"); }
+        }
+        File env = new File(home, ".env");
+        if (env.exists()) {
+            sb.append("\n--- .env ---\n");
+            try {
+                for (String line : new String(java.nio.file.Files.readAllBytes(env.toPath()), StandardCharsets.UTF_8).split("\n")) {
+                    if (line.startsWith("DEEPSEEK_API_KEY=")) {
+                        String k = line.substring("DEEPSEEK_API_KEY=".length());
+                        sb.append("DEEPSEEK_API_KEY=")
+                          .append(k.length() > 8 ? k.substring(0, 4) + "****" + k.substring(k.length() - 4) : "****")
+                          .append("\n");
+                    } else {
+                        sb.append(line).append("\n");
+                    }
+                }
+            } catch (Exception e) { sb.append("(读取失败)\n"); }
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("CLI 参数")
+                .setMessage(sb.length() > 0 ? sb.toString() : "(环境尚未初始化，首次启动后生成)")
+                .setPositiveButton("关闭", null)
+                .show();
     }
 
     /** 请求运行时存储权限（媒体文件；Android 13+ 用 READ_MEDIA_*） */
