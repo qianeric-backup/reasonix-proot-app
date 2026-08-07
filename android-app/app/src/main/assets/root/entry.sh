@@ -42,6 +42,34 @@ SH
 fi
 [ -e /bin/bash ] || ln -sf /usr/local/bin/bash /bin/bash
 
+# adb 无线调试：guest 内安装 android-tools（用于在 reasonix 中通过 adb
+# 无线连接"安装本 app 的手机"）。dl-cdn 源在部分网络不可达，换成国内镜像。
+# 后台安装不阻塞启动；首次需联网（镜像源较快）。
+# 国内 DNS（8.8.8.8 在国内网络可能不可达）
+cat > /etc/resolv.conf <<DNS
+nameserver 223.5.5.5
+nameserver 119.29.29.29
+DNS
+
+if ! command -v adb >/dev/null 2>&1; then
+    VER=$(cat /etc/alpine-release 2>/dev/null | cut -d. -f1-2)
+    [ -n "$VER" ] || VER=v3.21
+    cat > /etc/apk/repositories <<EOF
+https://mirrors.aliyun.com/alpine/v$VER/main
+https://mirrors.aliyun.com/alpine/v$VER/community
+EOF
+    (
+        echo "[adb] apk update ..."
+        apk update 2>&1 | tail -2
+        echo "[adb] apk add android-tools ..."
+        if apk add --no-cache android-tools 2>&1 | tail -5; then
+            echo "[adb 已安装] $(adb version 2>/dev/null | head -1)"
+        else
+            echo "[adb 安装失败]"
+        fi
+    ) &
+fi
+
 # 直接进入 reasonix 交互会话；退出后落到 shell
 if command -v reasonix >/dev/null 2>&1; then
   reasonix

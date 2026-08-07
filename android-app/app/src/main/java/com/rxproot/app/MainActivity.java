@@ -120,16 +120,22 @@ public class MainActivity extends Activity {
     private void showAdbDialog() {
         String ip = getLocalIpAddress();
         StringBuilder msg = new StringBuilder();
+        msg.append("功能：在 reasonix 终端里用 adb 无线调试本手机。\n\n");
         if (ip != null) {
-            msg.append("本机局域网 IP：").append(ip).append("\n\n");
+            msg.append("本机 IP：").append(ip).append("\n\n");
         } else {
-            msg.append("未获取到局域网 IP（请连接 Wi-Fi）。\n\n");
+            msg.append("（未获取到局域网 IP，请连接 Wi-Fi）\n\n");
         }
-        msg.append("在电脑上执行：\n")
+        msg.append("第 1 步｜手机开启无线调试：\n")
+           .append("  设置 -> 开发者选项 -> 无线调试 -> 打开\n")
+           .append("  记下「配对码」和两个端口（配对端口 / 连接端口）\n\n")
+           .append("第 2 步｜在 reasonix 终端里执行（adb 首次会自动安装，需联网）：\n")
+           .append("  adb pair ").append(ip != null ? ip : "<IP>").append(":<配对端口> <配对码>\n")
+           .append("  adb connect ").append(ip != null ? ip : "<IP>").append(":<连接端口>\n")
+           .append("  adb devices\n\n")
+           .append("或先 USB 执行一次 adb tcpip 5555 后，直接：\n")
            .append("  adb connect ").append(ip != null ? ip : "<IP>").append(":5555\n\n")
-           .append("前提：本机已开启「无线调试」（开发者选项 -> 无线调试），\n")
-           .append("或用数据线执行过一次 adb tcpip 5555。\n\n")
-           .append("Android 11+ 也可直接打开无线调试设置页配对。");
+           .append("连接成功后即可 adb shell / adb install 等操作本手机。");
         new AlertDialog.Builder(this)
                 .setTitle("ADB 无线调试")
                 .setMessage(msg)
@@ -525,7 +531,7 @@ public class MainActivity extends Activity {
         File resolv = new File(rootfs, "etc/resolv.conf");
         if (!resolv.exists()) {
             try (FileOutputStream fo = new FileOutputStream(resolv)) {
-                fo.write("nameserver 8.8.8.8\nnameserver 1.1.1.1\n".getBytes(StandardCharsets.UTF_8));
+                fo.write("nameserver 223.5.5.5\nnameserver 119.29.29.29\n".getBytes(StandardCharsets.UTF_8));
             }
         }
 
