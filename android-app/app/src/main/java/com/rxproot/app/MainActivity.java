@@ -3,6 +3,8 @@ package com.rxproot.app;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
@@ -131,35 +133,95 @@ public class MainActivity extends Activity {
     /** ADB 无线调试：显示局域网 IP 与连接指引 */
     private void showAdbDialog() {
         String ip = getLocalIpAddress();
-        StringBuilder msg = new StringBuilder();
-        msg.append("功能：在 reasonix 终端里用 adb 无线调试本手机。\n\n");
-        if (ip != null) {
-            msg.append("本机 IP：").append(ip).append("\n\n");
-        } else {
-            msg.append("（未获取到局域网 IP，请连接 Wi-Fi）\n\n");
-        }
-        msg.append("第 1 步｜手机开启无线调试：\n")
-           .append("  设置 -> 开发者选项 -> 无线调试 -> 打开\n")
-           .append("  记下「配对码」和两个端口（配对端口 / 连接端口）\n\n")
-           .append("第 2 步｜在 reasonix 终端里执行（adb 首次会自动安装，需联网）：\n")
-           .append("  adb pair ").append(ip != null ? ip : "<IP>").append(":<配对端口> <配对码>\n")
-           .append("  adb connect ").append(ip != null ? ip : "<IP>").append(":<连接端口>\n")
-           .append("  adb devices\n\n")
-           .append("或先 USB 执行一次 adb tcpip 5555 后，直接：\n")
-           .append("  adb connect ").append(ip != null ? ip : "<IP>").append(":5555\n\n")
-           .append("连接成功后即可 adb shell / adb install 等操作本手机。");
+        final String fip = (ip == null) ? "<IP>" : ip;
+        // 输入面板：配对端口 / 配对码 / 连接端口
+        EditText pairPort = new EditText(this);
+        pairPort.setSingleLine(true);
+        pairPort.setInputType(InputType.TYPE_CLASS_NUMBER);
+        pairPort.setHint("配对端口（无线调试界面显示，如 37000）");
+        EditText pairCode = new EditText(this);
+        pairCode.setSingleLine(true);
+        pairCode.setInputType(InputType.TYPE_CLASS_NUMBER);
+        pairCode.setHint("配对码（6 位数字）");
+        EditText connPort = new EditText(this);
+        connPort.setSingleLine(true);
+        connPort.setInputType(InputType.TYPE_CLASS_NUMBER);
+        connPort.setHint("连接端口（无线调试界面显示，如 37500；留空则用 5555）");
+        TextView tip = new TextView(this);
+        tip.setText("本机 IP：" + ip + "\n\n"
+                + "1. 手机：设置 -> 开发者选项 -> 无线调试 -> 打开，抄下配对码与两个端口\n"
+                + "2. 在上方填写后点「发送到终端」（自动执行配对+连接+检查）\n"
+                + "   提示：发送前请在 reasonix 中输入 exit 退到 shell\n"
+                + "3. 或点「复制命令」自行粘贴执行\n\n"
+                + "连接成功后即可 adb shell / adb install 等操作本手机。");
+        tip.setTextColor(0xFFCCCCCC);
+        tip.setTextSize(12);
+        int pad = (int) (16 * getResources().getDisplayMetrics().density);
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(pad, 8, pad, 0);
+        panel.addView(tip);
+        panel.addView(pairPort);
+        panel.addView(pairCode);
+        panel.addView(connPort);
         new AlertDialog.Builder(this)
                 .setTitle("ADB 无线调试")
-                .setMessage(msg)
-                .setPositiveButton("打开无线调试设置", (d, w) -> {
+                .setView(panel)
+                .setPositiveButton("发送到终端", (d, w) -> {
+                    String cmd = buildAdbCommands(fip,
+                            pairPort.getText().toString().trim(),
+                            pairCode.getText().toString().trim(),
+                            connPort.getText().toString().trim());
+                    sendToTerminal(cmd);
+                })
+                .setNeutralButton("复制命令", (d, w) -> {
+                    String cmd = buildAdbCommands(fip,
+                            pairPort.getText().toString().trim(),
+                            pairCode.getText().toString().trim(),
+                            connPort.getText().toString().trim());
+                    try {
+                        ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                        cm.setPrimaryClip(ClipData.newPlainText("adb", cmd));
+                    } catch (Exception e) {
+                        Log.w(TAG, "clipboard failed", e);
+                    }
+                })
+                .setNegativeButton("无线调试设置", (d, w) -> {
                     try {
                         startActivity(new Intent("android.settings.WIRELESS_DEBUGGING_SETTINGS"));
                     } catch (Exception e) {
                         Log.w(TAG, "cannot open wireless debugging settings", e);
                     }
                 })
-                .setNegativeButton("关闭", null)
                 .show();
+    }
+
+    /** 生成 adb 配对/连接命令 */
+    private String buildAdbCommands(String ip, String pairPort, String pairCode, String connPort) {
+        StringBuilder sb = new StringBuilder();
+        if (!pairPort.isEmpty() && !pairCode.isEmpty()) {
+            sb.append("adb pair ").append(ip).append(':').append(pairPort).append(' ').append(pairCode).append("\n");
+        }
+        String port = connPort.isEmpty() ? "5555" : connPort;
+        sb.append("adb connect ").append(ip).append(':').append(port).append("\n");
+        sb.append("adb devices\n");
+        return sb.toString();
+    }
+
+    /** 向 guest 终端发送命令（用户需已退到 shell；reasonix 会话内无效） */
+    private void sendToTerminal(String cmd) {
+        try {
+            if (procIn != null) {
+                procIn.write((cmd + "\n").getBytes(StandardCharsets.UTF_8));
+                procIn.flush();
+                pushOutput("\r\n[已发送 adb 命令到终端]\r\n");
+                Log.d(TAG, "sent to terminal: " + cmd.replace("\n", " ; "));
+            } else {
+                pushOutput("\r\n[终端未就绪]\r\n");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "send to terminal failed", e);
+        }
     }
 
     /** 获取本机局域网 IPv4 地址（遍历网络接口） */
