@@ -110,7 +110,6 @@ public class MainActivity extends Activity {
         // 侧滑菜单功能
         findViewById(R.id.menu_adb).setOnClickListener(v -> { drawerLayout.closeDrawers(); showAdbDialog(); });
         findViewById(R.id.menu_apikey).setOnClickListener(v -> { drawerLayout.closeDrawers(); showApiKeyConfigDialog(); });
-        findViewById(R.id.menu_cli).setOnClickListener(v -> { drawerLayout.closeDrawers(); showCliParamsDialog(); });
 
         requestStoragePermission();
     }
@@ -202,41 +201,6 @@ public class MainActivity extends Activity {
                     }
                 })
                 .setNegativeButton("取消", null)
-                .show();
-    }
-
-    /** CLI 参数：显示 reasonix 当前配置 */
-    private void showCliParamsDialog() {
-        File rootfs = new File(getFilesDir(), "rootfs");
-        File home = new File(rootfs, "root/.reasonix");
-        StringBuilder sb = new StringBuilder();
-        File cfg = new File(home, "config.toml");
-        if (cfg.exists()) {
-            sb.append("--- config.toml ---\n");
-            try {
-                sb.append(new String(java.nio.file.Files.readAllBytes(cfg.toPath()), StandardCharsets.UTF_8));
-            } catch (Exception e) { sb.append("(读取失败)\n"); }
-        }
-        File env = new File(home, ".env");
-        if (env.exists()) {
-            sb.append("\n--- .env ---\n");
-            try {
-                for (String line : new String(java.nio.file.Files.readAllBytes(env.toPath()), StandardCharsets.UTF_8).split("\n")) {
-                    if (line.startsWith("DEEPSEEK_API_KEY=")) {
-                        String k = line.substring("DEEPSEEK_API_KEY=".length());
-                        sb.append("DEEPSEEK_API_KEY=")
-                          .append(k.length() > 8 ? k.substring(0, 4) + "****" + k.substring(k.length() - 4) : "****")
-                          .append("\n");
-                    } else {
-                        sb.append(line).append("\n");
-                    }
-                }
-            } catch (Exception e) { sb.append("(读取失败)\n"); }
-        }
-        new AlertDialog.Builder(this)
-                .setTitle("CLI 参数")
-                .setMessage(sb.length() > 0 ? sb.toString() : "(环境尚未初始化，首次启动后生成)")
-                .setPositiveButton("关闭", null)
                 .show();
     }
 

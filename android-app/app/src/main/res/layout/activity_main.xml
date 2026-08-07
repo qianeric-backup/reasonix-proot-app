@@ -104,18 +104,6 @@
                     android:text="&#128273;  API Key 配置"
                     android:textColor="#222222"
                     android:textSize="15sp" />
-
-                <TextView
-                    android:id="@+id/menu_cli"
-                    android:layout_width="match_parent"
-                    android:layout_height="52dp"
-                    android:background="#FFFFFF"
-                    android:layout_marginTop="1dp"
-                    android:gravity="center_vertical"
-                    android:paddingLeft="16dp"
-                    android:text="&#9881;  CLI 参数"
-                    android:textColor="#222222"
-                    android:textSize="15sp" />
             </LinearLayout>
         </ScrollView>
     </LinearLayout>
