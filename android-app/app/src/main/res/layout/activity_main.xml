@@ -15,7 +15,7 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="48dp"
-            android:background="#101418"
+            android:background="#000000"
             android:gravity="center_vertical"
             android:orientation="horizontal">
 
@@ -59,13 +59,13 @@
         android:layout_width="280dp"
         android:layout_height="match_parent"
         android:layout_gravity="start"
-        android:background="#F5F5F5"
+        android:background="#000000"
         android:orientation="vertical">
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="56dp"
-            android:background="#101418"
+            android:background="#000000"
             android:gravity="center_vertical"
             android:paddingLeft="16dp"
             android:text="配置"
@@ -86,23 +86,23 @@
                     android:id="@+id/menu_adb"
                     android:layout_width="match_parent"
                     android:layout_height="52dp"
-                    android:background="#FFFFFF"
+                    android:background="#141414"
                     android:gravity="center_vertical"
                     android:paddingLeft="16dp"
                     android:text="&#128268;  ADB 无线调试"
-                    android:textColor="#222222"
+                    android:textColor="#FFFFFF"
                     android:textSize="15sp" />
 
                 <TextView
                     android:id="@+id/menu_apikey"
                     android:layout_width="match_parent"
                     android:layout_height="52dp"
-                    android:background="#FFFFFF"
+                    android:background="#141414"
                     android:layout_marginTop="1dp"
                     android:gravity="center_vertical"
                     android:paddingLeft="16dp"
                     android:text="&#128273;  API Key 配置"
-                    android:textColor="#222222"
+                    android:textColor="#FFFFFF"
                     android:textSize="15sp" />
             </LinearLayout>
         </ScrollView>

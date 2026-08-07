@@ -15,7 +15,7 @@
         android:label="Reasonix Proot"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
-        android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen">
+        android:theme="@style/AppTheme">
 
         <activity
             android:name=".MainActivity"

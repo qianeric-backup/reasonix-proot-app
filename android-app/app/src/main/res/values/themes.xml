@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 全局纯黑主题 -->
+    <style name="AppTheme" parent="android:style/Theme.Material.NoActionBar.Fullscreen">
+        <item name="android:windowBackground">#000000</item>
+        <item name="android:colorBackground">#000000</item>
+        <item name="android:alertDialogTheme">@style/DarkDialog</item>
+        <item name="android:statusBarColor">#000000</item>
+        <item name="android:navigationBarColor">#000000</item>
+    </style>
+
+    <!-- 深色对话框 -->
+    <style name="DarkDialog" parent="android:style/Theme.Material.Dialog.NoActionBar">
+        <item name="android:windowBackground">#161616</item>
+        <item name="android:colorAccent">#4CAF50</item>
+        <item name="android:textColorPrimary">#FFFFFF</item>
+        <item name="android:textColorSecondary">#CCCCCC</item>
+        <item name="android:colorControlNormal">#FFFFFF</item>
+        <item name="android:backgroundDimEnabled">true</item>
+    </style>
+</resources>
