@@ -134,7 +134,6 @@ public class MainActivity extends Activity {
             pushOutput("\r\n[后台运行模式 " + (!on ? "已开启" : "已关闭") + "："
                     + (!on ? "冻结前台操作，避免抢占其他应用（如微信）前台]" : "恢复正常前台行为]") + "\r\n");
         });
-        findViewById(R.id.menu_moments).setOnClickListener(v -> { drawerLayout.closeDrawers(); sendMomentsCommand(); });
         updateBgModeLabel();
 
         requestStoragePermission();
@@ -147,31 +146,6 @@ public class MainActivity extends Activity {
         if (tv != null) {
             tv.setText(on ? "\u23F0  后台运行模式：开" : "\u23F0  后台运行模式：关");
             tv.setTextColor(on ? 0xFF4CAF50 : 0xFFFFFFFF);
-        }
-    }
-
-    /** 打开微信朋友圈：按当前分辨率比例换算坐标，串联成一条 adb 命令发到终端
-     *  （adb-open-moments-summary.md：1440x3200 下 发现tab=(5/8w, h-120)、朋友圈=(1/2w, 1/8h)） */
-    private void sendMomentsCommand() {
-        try {
-            android.util.DisplayMetrics dm = new android.util.DisplayMetrics();
-            getWindowManager().getDefaultDisplay().getRealMetrics(dm);
-            int w = dm.widthPixels, h = dm.heightPixels;
-            int tabX = w * 5 / 8;
-            int tabY = h - 120;
-            int momX = w / 2;
-            int momY = h / 8;
-            String cmd = "adb shell \"am force-stop com.tencent.mm; sleep 1; "
-                    + "am start -n com.tencent.mm/.ui.LauncherUI >/dev/null 2>&1; sleep 4; "
-                    + "input tap " + tabX + " " + tabY + "; sleep 0.8; "
-                    + "input tap " + momX + " " + momY + "; "
-                    + "dumpsys activity activities 2>/dev/null | grep topResumedActivity\"\n";
-            sendToTerminal(cmd);
-            pushOutput("\r\n[已发送：打开微信朋友圈] 分辨率 " + w + "x" + h
-                    + "，坐标 发现tab(" + tabX + "," + tabY + ") 朋友圈(" + momX + "," + momY + ")\r\n");
-        } catch (Exception e) {
-            Log.w(TAG, "sendMomentsCommand failed", e);
-            pushOutput("\r\n[打开朋友圈失败] " + e + "\r\n");
         }
     }
 
