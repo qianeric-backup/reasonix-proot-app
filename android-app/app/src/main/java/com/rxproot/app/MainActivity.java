@@ -4,6 +4,9 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
+import android.database.Cursor;
+import android.net.Uri;
+import android.provider.OpenableColumns;
 import android.content.SharedPreferences;
 import android.net.Uri;
 import android.os.Build;
@@ -49,6 +52,7 @@ import androidx.drawerlayout.widget.DrawerLayout;
 public class MainActivity extends Activity {
 
     private static final String TAG = "ReasonixProot";
+    private static final int REQ_UPDATE_RESONIX = 200;
 
     private WebView webView;
     private Process prootProcess;
@@ -110,6 +114,7 @@ public class MainActivity extends Activity {
         // 侧滑菜单功能
         findViewById(R.id.menu_adb).setOnClickListener(v -> { drawerLayout.closeDrawers(); showAdbDialog(); });
         findViewById(R.id.menu_apikey).setOnClickListener(v -> { drawerLayout.closeDrawers(); showApiKeyConfigDialog(); });
+        findViewById(R.id.menu_update).setOnClickListener(v -> { drawerLayout.closeDrawers(); showUpdateResonixDialog(); });
 
         requestStoragePermission();
     }
@@ -208,6 +213,80 @@ public class MainActivity extends Activity {
                 })
                 .setNegativeButton("取消", null)
                 .show();
+    }
+
+    /** 更新 resonix：从手机选择新版文件，或恢复内置版本 */
+    private void showUpdateResonixDialog() {
+        new AlertDialog.Builder(this)
+                .setTitle("更新 resonix")
+                .setMessage("选择更新方式：\n\n"
+                        + "1. 从手机选择新版 resonix 文件（推荐）：\n"
+                        + "   将新版二进制放到手机，点下方「选择文件」\n\n"
+                        + "2. 恢复内置版本：\n"
+                        + "   从 APK 自带版本覆盖（用于误更新后还原）\n\n"
+                        + "更新后会自动重启 Linux 环境。")
+                .setPositiveButton("选择文件", (d, w) -> {
+                    try {
+                        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                        i.addCategory(Intent.CATEGORY_OPENABLE);
+                        i.setType("*/*");
+                        startActivityForResult(i, REQ_UPDATE_RESONIX);
+                    } catch (Exception e) {
+                        Log.e(TAG, "open document failed", e);
+                    }
+                })
+                .setNeutralButton("恢复内置", (d, w) -> restoreBundledResonix())
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    /** 从 APK assets 恢复内置 reasonix */
+    private void restoreBundledResonix() {
+        try {
+            File rootfs = new File(getFilesDir(), "rootfs");
+            File rx = new File(new File(rootfs, "usr/local/bin"), "reasonix");
+            rx.getParentFile().mkdirs();
+            extractAsset("usr/bin/reasonix", rx);
+            rx.setExecutable(true, false);
+            Log.d(TAG, "reasonix restored from bundle");
+            pushOutput("\r\n[已恢复内置 resonix，正在重启环境...]\r\n");
+            restartEnvironment();
+        } catch (Exception e) {
+            Log.e(TAG, "restore reasonix failed", e);
+        }
+    }
+
+    /** 从手机存储复制新版 reasonix 到 guest */
+    private void applyReasonixUpdate(Uri uri) {
+        try {
+            File rootfs = new File(getFilesDir(), "rootfs");
+            File rx = new File(new File(rootfs, "usr/local/bin"), "reasonix");
+            rx.getParentFile().mkdirs();
+            try (InputStream in = getContentResolver().openInputStream(uri);
+                 OutputStream out = new FileOutputStream(rx)) {
+                byte[] buf = new byte[65536];
+                int n;
+                long total = 0;
+                while ((n = in.read(buf)) > 0) {
+                    out.write(buf, 0, n);
+                    total += n;
+                }
+                Log.d(TAG, "reasonix updated, size=" + total);
+            }
+            rx.setExecutable(true, false);
+            pushOutput("\r\n[resonix 已更新（" + rx.length() + " 字节），正在重启环境...]\r\n");
+            restartEnvironment();
+        } catch (Exception e) {
+            Log.e(TAG, "apply reasonix update failed", e);
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_UPDATE_RESONIX && resultCode == RESULT_OK && data != null && data.getData() != null) {
+            applyReasonixUpdate(data.getData());
+        }
     }
 
     /** 请求运行时存储权限（媒体文件；Android 13+ 用 READ_MEDIA_*） */

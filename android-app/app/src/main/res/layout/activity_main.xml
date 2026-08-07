@@ -104,6 +104,18 @@
                     android:text="&#128273;  API Key 配置"
                     android:textColor="#FFFFFF"
                     android:textSize="15sp" />
+
+                <TextView
+                    android:id="@+id/menu_update"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:background="#141414"
+                    android:layout_marginTop="1dp"
+                    android:gravity="center_vertical"
+                    android:paddingLeft="16dp"
+                    android:text="&#128260;  更新 resonix"
+                    android:textColor="#FFFFFF"
+                    android:textSize="15sp" />
             </LinearLayout>
         </ScrollView>
     </LinearLayout>
