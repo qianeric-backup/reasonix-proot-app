@@ -85,26 +85,48 @@ if command -v adb >/dev/null 2>&1; then
     cat > /usr/local/bin/adb-autoconnect <<'SH'
 #!/bin/sh
 # 自动发现无线调试端口并连接（adb-无线调试持久化总结.md）
-[ -f /root/.adb_ip ] || { echo "无 /root/.adb_ip（请重开应用）"; exit 1; }
+# 结果写入 /root/.adb_status 供 Android 侧对话框显示
+status() { echo "$1" > /root/.adb_status; }
+adb_state() {
+    if adb devices 2>/dev/null | awk 'NR>1 && $2=="device" {f=1} END{exit !f}'; then
+        echo "device"
+    elif adb devices 2>/dev/null | grep -q "unauthorized"; then
+        echo "unauthorized"
+    elif adb devices 2>/dev/null | grep -q "offline"; then
+        echo "offline"
+    else
+        echo "none"
+    fi
+}
+[ -f /root/.adb_ip ] || { status "no_ip"; echo "无 /root/.adb_ip（请重开应用）"; exit 1; }
 HOST_IP=$(cat /root/.adb_ip)
 case "$HOST_IP" in
     *.*.*.*) : ;;
-    *) echo "IP 无效: $HOST_IP"; exit 1 ;;
+    *) status "bad_ip"; echo "IP 无效: $HOST_IP"; exit 1 ;;
 esac
 # 已有 device 直接复用（免配对直连）
-if adb devices 2>/dev/null | awk 'NR>1 && $2=="device" {f=1} END{exit !f}'; then
-    echo "[adb] 已连接 $HOST_IP（免配对直连）"
+if [ "$(adb_state)" = "device" ]; then
+    ADDR=$(adb devices 2>/dev/null | awk 'NR>1 && $2=="device" {print $1; exit}')
+    status "connected $ADDR"
+    echo "[adb] 已连接 $ADDR（免配对直连）"
     adb devices -l
     exit 0
 fi
 echo "扫描 $HOST_IP:30000-49999 ...（约 10-40 秒）"
 PORT=$(seq 30000 49999 | xargs -P 100 -I{} sh -c 'nc -z -w1 '"$HOST_IP"' {} >/dev/null 2>&1 && echo {}' 2>/dev/null | sort -n | head -1)
 if [ -z "$PORT" ]; then
+    status "no_port"
     echo "未找到开放端口。请确认手机已开启「无线调试」且与本机同 Wi-Fi。"
     exit 1
 fi
 echo "发现端口 $PORT，连接中 ..."
-adb connect "$HOST_IP:$PORT"
+adb connect "$HOST_IP:$PORT" >/dev/null 2>&1
+sleep 1
+case "$(adb_state)" in
+    device) status "connected $HOST_IP:$PORT" ;;
+    unauthorized) status "unauthorized" ;;
+    *) status "disconnected" ;;
+esac
 adb devices -l
 SH
     chmod 755 /usr/local/bin/adb-autoconnect

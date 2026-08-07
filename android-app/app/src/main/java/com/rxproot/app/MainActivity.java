@@ -135,21 +135,29 @@ public class MainActivity extends Activity {
     private void showAdbDialog() {
         String ip = getLocalIpAddress();
         final String fip = (ip == null) ? "<IP>" : ip;
+        SharedPreferences prefs = getSharedPreferences("prefs", MODE_PRIVATE);
+        String savedPairPort = prefs.getString("adb_pair_port", "");
+        String savedPairCode = prefs.getString("adb_pair_code", "");
+        String savedConnPort = prefs.getString("adb_conn_port", "");
+        String status = readAdbStatus();
         // 输入面板：配对端口 / 配对码 / 连接端口
         EditText pairPort = new EditText(this);
         pairPort.setSingleLine(true);
         pairPort.setInputType(InputType.TYPE_CLASS_NUMBER);
         pairPort.setHint("配对端口（无线调试界面显示，如 37000）");
+        if (!savedPairPort.isEmpty()) pairPort.setText(savedPairPort);
         EditText pairCode = new EditText(this);
         pairCode.setSingleLine(true);
         pairCode.setInputType(InputType.TYPE_CLASS_NUMBER);
         pairCode.setHint("配对码（6 位数字）");
+        if (!savedPairCode.isEmpty()) pairCode.setText(savedPairCode);
         EditText connPort = new EditText(this);
         connPort.setSingleLine(true);
         connPort.setInputType(InputType.TYPE_CLASS_NUMBER);
-        connPort.setHint("连接端口（无线调试界面显示，如 37500；留空则用 5555）");
+        connPort.setHint("连接端口（留空则自动扫描发现）");
+        if (!savedConnPort.isEmpty()) connPort.setText(savedConnPort);
         TextView tip = new TextView(this);
-        tip.setText("本机 IP：" + ip + "（已写入 guest，启动时自动扫描端口重连）\n\n"
+        tip.setText("本机 IP：" + ip + "\n连接状态：" + status + "\n\n"
                 + "1. 手机：设置 -> 开发者选项 -> 无线调试 -> 打开，抄下配对码与两个端口\n"
                 + "2. 首次使用：填写配对端口+配对码点「发送到终端」（自动配对+连接+检查）\n"
                 + "3. 之后免配对：点「自动连接」自动扫描端口并直连（无需填连接端口）\n"
@@ -169,12 +177,16 @@ public class MainActivity extends Activity {
         // 自动连接按钮：触发 guest 内 adb-autoconnect（扫描 30000-49999 并 connect）
         Button autoBtn = new Button(this);
         autoBtn.setText("自动连接（扫描端口并直连）");
-        autoBtn.setOnClickListener(v -> sendToTerminal("adb-autoconnect\n"));
+        autoBtn.setOnClickListener(v -> {
+            saveAdbPrefs(prefs, pairPort, pairCode, connPort);
+            sendToTerminal("adb-autoconnect\n");
+        });
         panel.addView(autoBtn);
         new AlertDialog.Builder(this)
                 .setTitle("ADB 无线调试")
                 .setView(panel)
                 .setPositiveButton("发送到终端", (d, w) -> {
+                    saveAdbPrefs(prefs, pairPort, pairCode, connPort);
                     String cmd = buildAdbCommands(fip,
                             pairPort.getText().toString().trim(),
                             pairCode.getText().toString().trim(),
@@ -182,6 +194,7 @@ public class MainActivity extends Activity {
                     sendToTerminal(cmd);
                 })
                 .setNeutralButton("复制命令", (d, w) -> {
+                    saveAdbPrefs(prefs, pairPort, pairCode, connPort);
                     String cmd = buildAdbCommands(fip,
                             pairPort.getText().toString().trim(),
                             pairCode.getText().toString().trim(),
@@ -201,6 +214,36 @@ public class MainActivity extends Activity {
                     }
                 })
                 .show();
+    }
+
+    /** 保存 ADB 配对信息（下次打开自动填充） */
+    private void saveAdbPrefs(SharedPreferences prefs, EditText pairPort, EditText pairCode, EditText connPort) {
+        prefs.edit()
+                .putString("adb_pair_port", pairPort.getText().toString().trim())
+                .putString("adb_pair_code", pairCode.getText().toString().trim())
+                .putString("adb_conn_port", connPort.getText().toString().trim())
+                .apply();
+    }
+
+    /** 读取 guest 内 adb 连接状态（/root/.adb_status，由 adb-autoconnect 写入） */
+    private String readAdbStatus() {
+        try {
+            File f = new File(new File(new File(getFilesDir(), "rootfs"), "root"), ".adb_status");
+            if (f.exists()) {
+                String s = new String(java.nio.file.Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8).trim();
+                if (!s.isEmpty()) {
+                    if (s.startsWith("connected")) return "已连接 " + s.substring("connected ".length());
+                    if (s.equals("unauthorized")) return "已连接但未授权（请在手机弹窗点允许）";
+                    if (s.equals("offline")) return "设备离线（offline）";
+                    if (s.equals("no_port")) return "未发现无线调试端口（请确认已开启）";
+                    if (s.equals("no_ip")) return "未获取本机 IP（请连接 Wi-Fi）";
+                    return s;
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "readAdbStatus failed", e);
+        }
+        return "未知（首次启动后自动检测）";
     }
 
     /** 生成 adb 配对/连接命令 */
