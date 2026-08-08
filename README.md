@@ -19,6 +19,7 @@
 - **离线打包**：Alpine rootfs、proot、reasonix、xterm.js 全部内置，首次启动解压后无需网络（reasonix 调用 API 时才需联网）。
 - **手机存储访问**：guest 内 `/sdcard` 直接映射手机共享存储；首次启动引导"所有文件访问"授权（授权后自动重启环境生效），并可读写宿主 app 私有数据（`/host-data`）与只读系统分区（`/host/system` 等）。
 - **bash 兼容**：Alpine 无 bash，内置 `bash → busybox ash(sh)` 包装，reasonix 的 shell 命令可直接执行；同时关闭 reasonix 的 OS 沙箱（Android 无 bubblewrap）。
+- **手机 Root 权限**：检测 KernelSU/Magisk，侧滑菜单可查看/测试授权状态；reasonix（AI）内直接执行 `root <命令>` 即通过 app 以 su 获取手机 root 权限（如 `root id`、`root 'pm list packages'`）。
 
 ## 架构
 

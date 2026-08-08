@@ -135,11 +135,151 @@ public class MainActivity extends Activity {
                     + (!on ? "冻结前台操作，避免抢占其他应用（如微信）前台]" : "恢复正常前台行为]") + "\r\n");
         });
         updateBgModeLabel();
+        findViewById(R.id.menu_root).setOnClickListener(v -> { drawerLayout.closeDrawers(); showRootDialog(); });
 
         requestStoragePermission();
     }
 
-    /** 更新侧滑菜单"后台运行模式"开关标签 */
+    /* ==================== Root 权限（KernelSU/Magisk） ==================== */
+
+    /** root 命令桥：guest 写 /root/.root-cmd → 此轮询执行 su → 结果写 /root/.root-out */
+    private final Handler rootPoller = new Handler(Looper.getMainLooper());
+    private final Runnable rootPollTask = new Runnable() {
+        @Override
+        public void run() {
+            processRootCommandQueue();
+            rootPoller.postDelayed(this, 1500);
+        }
+    };
+
+    private void startRootPolling() {
+        Log.d(TAG, "root polling started");
+        rootPoller.removeCallbacks(rootPollTask);
+        rootPoller.postDelayed(rootPollTask, 1500);
+    }
+
+    private void stopRootPolling() {
+        rootPoller.removeCallbacks(rootPollTask);
+    }
+
+    /** 处理 guest 的 root 命令队列（一次一个，串行；结果写回 .root-out 带 __DONE__ 标记） */
+    private void processRootCommandQueue() {
+        try {
+            File rootDir = new File(new File(getFilesDir(), "rootfs"), "root");
+            File cmdFile = new File(rootDir, ".root-cmd");
+            File outFile = new File(rootDir, ".root-out");
+            if (!cmdFile.exists()) return;
+            String cmd = new String(java.nio.file.Files.readAllBytes(cmdFile.toPath()),
+                    StandardCharsets.UTF_8).trim();
+            cmdFile.delete();
+            if (cmd.isEmpty()) return;
+            Log.d(TAG, "root bridge cmd: " + cmd);
+            new Thread(() -> {
+                String r = execRootCommand(cmd, 25);
+                try {
+                    java.nio.file.Files.write(outFile.toPath(),
+                            ((r == null ? "(root 执行失败，请检查授权)" : r) + "\n__DONE__")
+                                    .getBytes(StandardCharsets.UTF_8));
+                } catch (Exception e) {
+                    Log.w(TAG, "root out write failed", e);
+                }
+            }, "root-bridge").start();
+        } catch (Exception e) {
+            Log.w(TAG, "root queue failed", e);
+        }
+    }
+
+    /** Root 权限对话框：检测状态 + 授权引导 + 测试 */
+    private void showRootDialog() {
+        String su = findSuPath();
+        TextView status = new TextView(this);
+        status.setTextSize(14);
+        status.setTypeface(null, android.graphics.Typeface.BOLD);
+        TextView tip = createDarkTip(
+                "本应用内置 root 命令桥：AI（reasonix）内可直接执行 root <命令> 获取手机 root 权限。\n\n"
+                        + "使用方式（reasonix 终端里）：\n"
+                        + "  root id                  # 查看 root 身份\n"
+                        + "  root 'pm list packages'  # 例：列出应用\n\n"
+                        + "首次执行会弹出 root 授权请求（KernelSU/Magisk），请允许。\n"
+                        + "⚠ 请勿随意执行未知命令，root 权限可完全控制系统。");
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(16), dp(8), dp(16), 0);
+        panel.addView(status);
+        panel.addView(tip);
+        Button testBtn = createDarkButton("测试 root（执行 id）");
+        panel.addView(testBtn);
+        TextView result = createDarkResult();
+        result.setText("（测试结果将显示在这里）");
+        panel.addView(result);
+        new AlertDialog.Builder(this)
+                .setTitle("Root 权限")
+                .setView(panel)
+                .setPositiveButton("关闭", null)
+                .show();
+        // 检测状态（后台线程）
+        new Thread(() -> {
+            final String st;
+            if (su == null) {
+                st = "未检测到 root（未安装 KernelSU/Magisk）";
+            } else {
+                String r = execRootCommand("id", 5);
+                st = (r != null && r.contains("uid=0"))
+                        ? "已授权（" + su + "）：" + r.split("\n")[0]
+                        : "检测到 " + su + "，但执行失败（请在弹窗授权后重试）";
+            }
+            runOnUiThread(() -> {
+                status.setText(st);
+                status.setTextColor(st.contains("已授权") ? 0xFF7FDB8A : (st.contains("未检测") ? 0xFF888888 : 0xFFFFD54F));
+            });
+        }, "root-check").start();
+        testBtn.setOnClickListener(v -> {
+            result.setText("执行中...\nroot id");
+            new Thread(() -> {
+                String r = execRootCommand("id", 8);
+                runOnUiThread(() -> {
+                    result.setTextColor(r != null && r.contains("uid=0") ? 0xFF7FDB8A : 0xFFFF6E6E);
+                    result.setText(r == null ? "(无输出或超时——请检查授权)" : r.trim());
+                });
+            }, "root-test").start();
+        });
+    }
+
+    /** 探测 su 路径 */
+    private String findSuPath() {
+        String[] paths = {
+                "/system/bin/su", "/system/xbin/su", "/sbin/su", "/vendor/bin/su",
+                "/system/bin/.ext/.su", "/system/usr/we-need-root/su-backup"
+        };
+        for (String p : paths) {
+            boolean ex = new File(p).exists();
+            Log.d(TAG, "root probe: " + p + " exists=" + ex + " canRead=" + new File(p).canRead());
+            if (ex) return p;
+        }
+        return null;
+    }
+
+    /** 执行 root 命令（su -c），返回 stdout+stderr（失败返回 null） */
+    private String execRootCommand(String cmd, int timeoutSec) {
+        String su = findSuPath();
+        if (su == null) return null;
+        try {
+            Process p = new ProcessBuilder(su, "-c", cmd)
+                    .redirectErrorStream(true).start();
+            if (!p.waitFor(timeoutSec, TimeUnit.SECONDS)) {
+                p.destroy();
+                return "(超时)";
+            }
+            byte[] out = new byte[8192];
+            int n = p.getInputStream().read(out);
+            return n > 0 ? new String(out, 0, n, StandardCharsets.UTF_8) : "";
+        } catch (Exception e) {
+            Log.w(TAG, "root exec failed: " + e);
+            return null;
+        }
+    }
+
+    /* ==================== 侧滑菜单功能 ==================== */
     private void updateBgModeLabel() {
         boolean on = getSharedPreferences("prefs", MODE_PRIVATE).getBoolean("background_mode", false);
         TextView tv = findViewById(R.id.menu_bgmode);
@@ -1010,6 +1150,7 @@ public class MainActivity extends Activity {
         pb.environment().put("PROOT_TMP_DIR", files.getAbsolutePath());
         prootProcess = pb.start();
         procIn = prootProcess.getOutputStream();
+        startRootPolling();   // 启动 root 命令桥轮询（guest root <cmd> → app su 执行）
 
         Thread reader = new Thread(() -> {
             try (InputStream in = prootProcess.getInputStream()) {
@@ -1101,6 +1242,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        stopRootPolling();
         if (prootProcess != null) {
             prootProcess.destroy();     // pty-bridge 收到 SIGTERM 后会 kill 整个 guest 进程组
             prootProcess = null;

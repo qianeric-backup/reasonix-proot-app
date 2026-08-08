@@ -183,6 +183,33 @@ SH
     chmod 755 /usr/local/bin/adb-dopair
     # 5) 启动即自动重连：后台静默执行（不阻塞 reasonix 启动）
     ( sleep 4; adb-autoconnect >/tmp/adb-auto.log 2>&1 || true ) &
+fi
+
+# root 命令桥：app 侧以 su 执行本机 root 命令（KernelSU/Magisk）。
+# AI/用户在 reasonix 里直接 `root <命令>` 即可获取手机 root 权限。
+# 原理：写入 /root/.root-cmd → app 轮询执行 su → 结果写 /root/.root-out。
+cat > /usr/local/bin/root <<'SH'
+#!/bin/sh
+# root 命令桥包装（app 侧 su 执行）
+if [ -z "$1" ]; then
+    echo "用法: root <命令>  例: root id / root 'pm list packages'"
+    exit 1
+fi
+rm -f /root/.root-out
+printf '%s' "$*" > /root/.root-cmd
+i=0
+while [ ! -f /root/.root-out ] && [ $i -lt 60 ]; do
+    sleep 0.5
+    i=$((i+1))
+done
+if [ -f /root/.root-out ]; then
+    cat /root/.root-out
+    rm -f /root/.root-out
+else
+    echo "(root 执行超时——请检查 Root 权限对话框中的授权状态)"
+fi
+SH
+chmod 755 /usr/local/bin/root
 
     # ADB 独立执行服务：app 侧把命令写入 /root/.adb-cmd，此循环执行并把
     # 结果写入 /root/.adb-out（末尾追加 __DONE__ 标记）。使 ADB 无线调试
@@ -201,7 +228,6 @@ SH
             sleep 0.3
         done
     ) &
-fi
 
 # 直接进入 reasonix 交互会话；退出后落到 shell
 if command -v reasonix >/dev/null 2>&1; then

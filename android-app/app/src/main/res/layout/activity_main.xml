@@ -135,6 +135,18 @@
                     android:text="后台运行模式：关"
                     android:textColor="#FFFFFF"
                     android:textSize="15sp" />
+
+                <TextView
+                    android:id="@+id/menu_root"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:background="#141414"
+                    android:layout_marginTop="1dp"
+                    android:gravity="center_vertical"
+                    android:paddingLeft="16dp"
+                    android:text="Root 权限"
+                    android:textColor="#FFFFFF"
+                    android:textSize="15sp" />
             </LinearLayout>
         </ScrollView>
     </LinearLayout>
