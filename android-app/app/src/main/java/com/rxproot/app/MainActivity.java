@@ -151,6 +151,55 @@ public class MainActivity extends Activity {
 
     /* ==================== 侧滑菜单功能 ==================== */
 
+    /** dp 转 px */
+    private int dp(float v) {
+        return (int) (v * getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    /** 深色输入框（纯黑观感统一） */
+    private EditText createDarkEditText(String hint, int inputType) {
+        EditText et = new EditText(this);
+        et.setSingleLine(true);
+        et.setInputType(inputType);
+        et.setHint(hint);
+        et.setTextColor(0xFFFFFFFF);
+        et.setHintTextColor(0xFF707070);
+        et.setBackgroundColor(0xFF1A1A1A);
+        et.setPadding(dp(14), dp(10), dp(14), dp(10));
+        return et;
+    }
+
+    /** 深色按钮 */
+    private Button createDarkButton(String text) {
+        Button b = new Button(this);
+        b.setText(text);
+        b.setTextColor(0xFFFFFFFF);
+        b.setTextSize(14);
+        b.setBackgroundColor(0xFF262626);
+        b.setAllCaps(false);
+        return b;
+    }
+
+    /** 深色说明文字 */
+    private TextView createDarkTip(String text) {
+        TextView tv = new TextView(this);
+        tv.setText(text);
+        tv.setTextColor(0xFFAAAAAA);
+        tv.setTextSize(12);
+        return tv;
+    }
+
+    /** 深色代码结果区 */
+    private TextView createDarkResult() {
+        TextView tv = new TextView(this);
+        tv.setTextColor(0xFF7FDB8A);
+        tv.setTextSize(11);
+        tv.setTypeface(android.graphics.Typeface.MONOSPACE);
+        tv.setBackgroundColor(0xFF101010);
+        tv.setPadding(dp(10), dp(8), dp(10), dp(8));
+        return tv;
+    }
+
     /** ADB 无线调试：显示局域网 IP 与连接指引 */
     private void showAdbDialog() {
         String ip = getLocalIpAddress();
@@ -160,58 +209,43 @@ public class MainActivity extends Activity {
         String savedPairCode = prefs.getString("adb_pair_code", "");
         String status = readAdbStatus();
         // 输入面板：配对端口 / 配对码（连接端口由 app 自动扫描，无需填写）
-        EditText pairPort = new EditText(this);
-        pairPort.setSingleLine(true);
-        pairPort.setInputType(InputType.TYPE_CLASS_NUMBER);
-        pairPort.setHint("配对端口（无线调试界面显示，如 37000）");
+        EditText pairPort = createDarkEditText("配对端口（无线调试界面显示，如 37000）", InputType.TYPE_CLASS_NUMBER);
         if (!savedPairPort.isEmpty()) pairPort.setText(savedPairPort);
-        EditText pairCode = new EditText(this);
-        pairCode.setSingleLine(true);
-        pairCode.setInputType(InputType.TYPE_CLASS_NUMBER);
-        pairCode.setHint("配对码（6 位数字）");
+        EditText pairCode = createDarkEditText("配对码（6 位数字）", InputType.TYPE_CLASS_NUMBER);
         if (savedPairCode.length() == 6) pairCode.setText(savedPairCode);
-        TextView tip = new TextView(this);
-        tip.setText("本机 IP：" + ip + "\n\n"
+        TextView tip = createDarkTip("本机 IP：" + ip + "\n\n"
                 + "1. 手机：设置 -> 开发者选项 -> 无线调试 -> 打开，抄下配对码与配对端口\n"
                 + "2. 首次使用：填配对端口+配对码，点「配对并连接」（配对后自动扫描连接端口并直连）\n"
                 + "3. 之后免配对：点「自动连接」直接扫描连接（无需任何输入）\n"
                 + "4. 连接成功后，reasonix（AI）里可直接执行 adb shell / adb install 等\n\n"
                 + "连接由本应用处理，AI 会话无需关心配对/端口。");
-        tip.setTextColor(0xFFCCCCCC);
-        tip.setTextSize(12);
         // 独立状态行（执行后自动刷新）
         TextView statusLine = new TextView(this);
         statusLine.setText("连接状态：" + status);
         statusLine.setTextColor(status.contains("已连接") ? 0xFF7FDB8A : (status.contains("需配对") ? 0xFFFFD54F : 0xFFCCCCCC));
         statusLine.setTextSize(13);
         statusLine.setTypeface(null, android.graphics.Typeface.BOLD);
-        int pad = (int) (16 * getResources().getDisplayMetrics().density);
+        int pad = dp(16);
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(pad, 8, pad, 0);
+        panel.setPadding(pad, dp(8), pad, 0);
         panel.addView(statusLine);
         panel.addView(tip);
         panel.addView(pairPort);
         panel.addView(pairCode);
         // 执行结果区（adb 输出实时显示，不依赖 reasonix 会话）
-        TextView resultView = new TextView(this);
-        resultView.setTextColor(0xFF7FDB8A);
-        resultView.setTextSize(11);
-        resultView.setTypeface(android.graphics.Typeface.MONOSPACE);
+        TextView resultView = createDarkResult();
         resultView.setText("（执行结果将显示在这里）");
-        resultView.setMinHeight(0);
         panel.addView(resultView);
         // 自动连接按钮：app 直接驱动 guest 内 adb-autoconnect（扫描 30000-49999 并 connect）
-        Button autoBtn = new Button(this);
-        autoBtn.setText("自动连接（免配对直连）");
+        Button autoBtn = createDarkButton("自动连接（免配对直连）");
         autoBtn.setOnClickListener(v -> {
             saveAdbPrefs(prefs, pairPort, pairCode);
             runAdbInGuest("adb-autoconnect", resultView, statusLine);
         });
         panel.addView(autoBtn);
         // 配对并连接按钮：app 执行配对 + 自动扫描连接端口 + 连接（全程 app 处理）
-        Button pairBtn = new Button(this);
-        pairBtn.setText("配对并连接");
+        Button pairBtn = createDarkButton("配对并连接");
         pairBtn.setOnClickListener(v -> {
             saveAdbPrefs(prefs, pairPort, pairCode);
             String pp = pairPort.getText().toString().trim();
@@ -240,6 +274,10 @@ public class MainActivity extends Activity {
                     }
                 })
                 .show();
+        // 操作逻辑优化：状态未知（首次/环境刚启动）时自动触发一次检测，免去手动点击
+        if (status.contains("未知")) {
+            statusLine.postDelayed(() -> runAdbInGuest("adb-autoconnect", resultView, statusLine), 600);
+        }
     }
 
     /** 在 guest 内直接执行 adb 命令（经 adb 服务，不依赖 reasonix/AI 会话），结果实时显示 */
@@ -380,10 +418,8 @@ public class MainActivity extends Activity {
                 }
             } catch (Exception ignored) {}
         }
-        EditText input = new EditText(this);
-        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        input.setSingleLine(true);
-        input.setHint("粘贴 DeepSeek API Key");
+        EditText input = createDarkEditText("粘贴 DeepSeek API Key",
+                InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         if (!current.isEmpty()) input.setText(current);
         new AlertDialog.Builder(this)
                 .setTitle("API Key 配置")
@@ -409,19 +445,15 @@ public class MainActivity extends Activity {
 
     /** 更新 resonix：从手机选择新版文件，或恢复内置版本 */
     private void showUpdateResonixDialog() {
-        EditText urlInput = new EditText(this);
-        urlInput.setSingleLine(true);
-        urlInput.setHint("reasonix 更新包链接 (.tgz)");
+        EditText urlInput = createDarkEditText("reasonix 更新包链接 (.tgz)", InputType.TYPE_CLASS_TEXT);
         urlInput.setText(REASONIX_DEFAULT_URL);
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
-        int pad = (int) (16 * getResources().getDisplayMetrics().density);
-        panel.setPadding(pad, 8, pad, 0);
-        TextView tip = new TextView(this);
-        tip.setText("官方源：@reasonix/cli-linux-arm64（npm 平台包）\n"
+        int pad = dp(16);
+        panel.setPadding(pad, dp(8), pad, 0);
+        TextView tip = createDarkTip("官方源：@reasonix/cli-linux-arm64（npm 平台包）\n"
                 + "可修改下方链接更新到其它版本。\n"
                 + "或从手机选择新版文件 / 恢复内置版本。");
-        tip.setTextColor(0xFFCCCCCC);
         panel.addView(tip);
         panel.addView(urlInput);
         new AlertDialog.Builder(this)

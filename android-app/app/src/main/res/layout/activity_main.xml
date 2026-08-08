@@ -42,10 +42,17 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginRight="12dp"
+                android:padding="6dp"
                 android:text="&#9679;"
                 android:textColor="#4CAF50"
-                android:textSize="12sp" />
+                android:textSize="10sp" />
         </LinearLayout>
+
+        <!-- 标题栏分隔线 -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#1E1E1E" />
 
         <WebView
             android:id="@+id/webview"
