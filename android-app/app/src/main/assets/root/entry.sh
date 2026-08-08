@@ -124,12 +124,47 @@ adb connect "$HOST_IP:$PORT" >/dev/null 2>&1
 sleep 1
 case "$(adb_state)" in
     device) status "connected $HOST_IP:$PORT" ;;
-    unauthorized) status "unauthorized" ;;
+    unauthorized) status "need_pair"; echo "设备未授权：请在手机无线调试页面完成配对（配对后免配对直连）" ;;
+    offline) status "need_pair"; echo "设备 offline：请先配对（配对码在手机「无线调试」页面）" ;;
     *) status "disconnected" ;;
 esac
 adb devices -l
 SH
     chmod 755 /usr/local/bin/adb-autoconnect
+
+    # 配对并自动连接工具（app 驱动）：adb-dopair <配对端口> <配对码>
+    # 配对成功后自动扫描连接端口并 connect，全程由 app 处理，AI/reasonix 无需关心。
+    cat > /usr/local/bin/adb-dopair <<'SH'
+#!/bin/sh
+# 配对并自动连接无线调试（由 Android 侧 app 调用）
+HOST_IP=$(cat /root/.adb_ip 2>/dev/null)
+[ -n "$HOST_IP" ] || { echo "无 /root/.adb_ip（请重开应用）"; exit 1; }
+PP=${1:-}; PC=${2:-}
+if [ -z "$PP" ] || [ -z "$PC" ]; then
+    echo "用法: adb-dopair <配对端口> <配对码>"
+    exit 1
+fi
+echo "配对 $HOST_IP:$PP ..."
+adb pair "$HOST_IP:$PP" "$PC" 2>&1 | head -3
+sleep 1
+echo "扫描连接端口 30000-49999 ..."
+PORT=$(seq 30000 49999 | xargs -P 100 -I{} sh -c 'nc -z -w1 '"$HOST_IP"' {} >/dev/null 2>&1 && echo {}' 2>/dev/null | sort -n | head -1)
+if [ -z "$PORT" ]; then
+    echo "未找到连接端口（请确认无线调试已开启）"
+    echo "no_port" > /root/.adb_status
+    exit 1
+fi
+echo "连接 $HOST_IP:$PORT ..."
+adb connect "$HOST_IP:$PORT"
+adb devices -l
+if adb devices 2>/dev/null | awk 'NR>1 && $2=="device" {f=1} END{exit !f}'; then
+    echo "connected $HOST_IP:$PORT" > /root/.adb_status
+    echo "== 配对连接成功！reasonix 内可直接 adb shell / adb install =="
+else
+    echo "need_pair" > /root/.adb_status
+fi
+SH
+    chmod 755 /usr/local/bin/adb-dopair
     # 5) 启动即自动重连：后台静默执行（不阻塞 reasonix 启动）
     ( sleep 4; adb-autoconnect >/tmp/adb-auto.log 2>&1 || true ) &
 

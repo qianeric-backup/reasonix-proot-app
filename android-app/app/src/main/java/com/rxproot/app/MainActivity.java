@@ -158,9 +158,8 @@ public class MainActivity extends Activity {
         SharedPreferences prefs = getSharedPreferences("prefs", MODE_PRIVATE);
         String savedPairPort = prefs.getString("adb_pair_port", "");
         String savedPairCode = prefs.getString("adb_pair_code", "");
-        String savedConnPort = prefs.getString("adb_conn_port", "");
         String status = readAdbStatus();
-        // 输入面板：配对端口 / 配对码 / 连接端口
+        // 输入面板：配对端口 / 配对码（连接端口由 app 自动扫描，无需填写）
         EditText pairPort = new EditText(this);
         pairPort.setSingleLine(true);
         pairPort.setInputType(InputType.TYPE_CLASS_NUMBER);
@@ -170,19 +169,14 @@ public class MainActivity extends Activity {
         pairCode.setSingleLine(true);
         pairCode.setInputType(InputType.TYPE_CLASS_NUMBER);
         pairCode.setHint("配对码（6 位数字）");
-        if (!savedPairCode.isEmpty()) pairCode.setText(savedPairCode);
-        EditText connPort = new EditText(this);
-        connPort.setSingleLine(true);
-        connPort.setInputType(InputType.TYPE_CLASS_NUMBER);
-        connPort.setHint("连接端口（留空则自动扫描发现）");
-        if (!savedConnPort.isEmpty()) connPort.setText(savedConnPort);
+        if (savedPairCode.length() == 6) pairCode.setText(savedPairCode);
         TextView tip = new TextView(this);
         tip.setText("本机 IP：" + ip + "\n连接状态：" + status + "\n\n"
-                + "1. 手机：设置 -> 开发者选项 -> 无线调试 -> 打开，抄下配对码与两个端口\n"
-                + "2. 首次使用：填写配对端口+配对码，点「配对并连接」（直接执行，不经过 reasonix）\n"
-                + "3. 之后免配对：点「自动连接」自动扫描端口并直连（无需填连接端口）\n"
-                + "4. 或点「复制命令」自行粘贴执行\n\n"
-                + "连接成功后即可 adb shell / adb install 等操作本手机。");
+                + "1. 手机：设置 -> 开发者选项 -> 无线调试 -> 打开，抄下配对码与配对端口\n"
+                + "2. 首次使用：填配对端口+配对码，点「配对并连接」（配对后自动扫描连接端口并直连）\n"
+                + "3. 之后免配对：点「自动连接」直接扫描连接（无需任何输入）\n"
+                + "4. 连接成功后，reasonix（AI）里可直接执行 adb shell / adb install 等\n\n"
+                + "连接由本应用处理，AI 会话无需关心配对/端口。");
         tip.setTextColor(0xFFCCCCCC);
         tip.setTextSize(12);
         int pad = (int) (16 * getResources().getDisplayMetrics().density);
@@ -192,7 +186,6 @@ public class MainActivity extends Activity {
         panel.addView(tip);
         panel.addView(pairPort);
         panel.addView(pairCode);
-        panel.addView(connPort);
         // 执行结果区（adb 输出实时显示，不依赖 reasonix 会话）
         TextView resultView = new TextView(this);
         resultView.setTextColor(0xFF7FDB8A);
@@ -203,33 +196,35 @@ public class MainActivity extends Activity {
         panel.addView(resultView);
         // 自动连接按钮：app 直接驱动 guest 内 adb-autoconnect（扫描 30000-49999 并 connect）
         Button autoBtn = new Button(this);
-        autoBtn.setText("自动连接（扫描端口并直连）");
+        autoBtn.setText("自动连接（免配对直连）");
         autoBtn.setOnClickListener(v -> {
-            saveAdbPrefs(prefs, pairPort, pairCode, connPort);
+            saveAdbPrefs(prefs, pairPort, pairCode);
             runAdbInGuest("adb-autoconnect", resultView);
         });
         panel.addView(autoBtn);
-        // 配对并连接按钮：app 直接执行配对+连接+检查
+        // 配对并连接按钮：app 执行配对 + 自动扫描连接端口 + 连接（全程 app 处理）
         Button pairBtn = new Button(this);
         pairBtn.setText("配对并连接");
         pairBtn.setOnClickListener(v -> {
-            saveAdbPrefs(prefs, pairPort, pairCode, connPort);
-            String cmd = buildAdbCommands(fip,
-                    pairPort.getText().toString().trim(),
-                    pairCode.getText().toString().trim(),
-                    connPort.getText().toString().trim());
-            runAdbInGuest(cmd, resultView);
+            saveAdbPrefs(prefs, pairPort, pairCode);
+            String pp = pairPort.getText().toString().trim();
+            String pc = pairCode.getText().toString().trim();
+            if (pp.isEmpty() || pc.isEmpty()) {
+                resultView.setTextColor(0xFFFF6E6E);
+                resultView.setText("请先在手机上开启「无线调试」，抄下配对端口和 6 位配对码后填写。");
+                return;
+            }
+            runAdbInGuest("adb-dopair " + pp + " " + pc, resultView);
         });
         panel.addView(pairBtn);
         new AlertDialog.Builder(this)
                 .setTitle("ADB 无线调试")
                 .setView(panel)
                 .setNeutralButton("复制命令", (d, w) -> {
-                    saveAdbPrefs(prefs, pairPort, pairCode, connPort);
+                    saveAdbPrefs(prefs, pairPort, pairCode);
                     String cmd = buildAdbCommands(fip,
                             pairPort.getText().toString().trim(),
-                            pairCode.getText().toString().trim(),
-                            connPort.getText().toString().trim());
+                            pairCode.getText().toString().trim());
                     try {
                         ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
                         cm.setPrimaryClip(ClipData.newPlainText("adb", cmd));
@@ -285,11 +280,10 @@ public class MainActivity extends Activity {
     }
 
     /** 保存 ADB 配对信息（下次打开自动填充） */
-    private void saveAdbPrefs(SharedPreferences prefs, EditText pairPort, EditText pairCode, EditText connPort) {
+    private void saveAdbPrefs(SharedPreferences prefs, EditText pairPort, EditText pairCode) {
         prefs.edit()
                 .putString("adb_pair_port", pairPort.getText().toString().trim())
                 .putString("adb_pair_code", pairCode.getText().toString().trim())
-                .putString("adb_conn_port", connPort.getText().toString().trim())
                 .apply();
     }
 
@@ -303,6 +297,7 @@ public class MainActivity extends Activity {
                     if (s.startsWith("connected")) return "已连接 " + s.substring("connected ".length());
                     if (s.equals("unauthorized")) return "已连接但未授权（请在手机弹窗点允许）";
                     if (s.equals("offline")) return "设备离线（offline）";
+                    if (s.equals("need_pair")) return "需配对：无线调试已开启但未信任本设备（填写配对端口+配对码配对）";
                     if (s.equals("no_port")) return "未发现无线调试端口（请确认已开启）";
                     if (s.equals("no_ip")) return "未获取本机 IP（请连接 Wi-Fi）";
                     return s;
@@ -314,15 +309,12 @@ public class MainActivity extends Activity {
         return "未知（首次启动后自动检测）";
     }
 
-    /** 生成 adb 配对/连接命令 */
-    private String buildAdbCommands(String ip, String pairPort, String pairCode, String connPort) {
+    /** 生成 adb 配对/连接命令（由 app 驱动 guest 内 adb-dopair 完成配对+自动扫描连接端口） */
+    private String buildAdbCommands(String ip, String pairPort, String pairCode) {
         StringBuilder sb = new StringBuilder();
         if (!pairPort.isEmpty() && !pairCode.isEmpty()) {
-            sb.append("adb pair ").append(ip).append(':').append(pairPort).append(' ').append(pairCode).append("\n");
+            sb.append("adb-dopair ").append(pairPort).append(' ').append(pairCode).append('\n');
         }
-        String port = connPort.isEmpty() ? "5555" : connPort;
-        sb.append("adb connect ").append(ip).append(':').append(port).append("\n");
-        sb.append("adb devices\n");
         return sb.toString();
     }
 
