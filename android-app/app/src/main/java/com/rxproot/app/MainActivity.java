@@ -171,7 +171,7 @@ public class MainActivity extends Activity {
         pairCode.setHint("配对码（6 位数字）");
         if (savedPairCode.length() == 6) pairCode.setText(savedPairCode);
         TextView tip = new TextView(this);
-        tip.setText("本机 IP：" + ip + "\n连接状态：" + status + "\n\n"
+        tip.setText("本机 IP：" + ip + "\n\n"
                 + "1. 手机：设置 -> 开发者选项 -> 无线调试 -> 打开，抄下配对码与配对端口\n"
                 + "2. 首次使用：填配对端口+配对码，点「配对并连接」（配对后自动扫描连接端口并直连）\n"
                 + "3. 之后免配对：点「自动连接」直接扫描连接（无需任何输入）\n"
@@ -179,10 +179,17 @@ public class MainActivity extends Activity {
                 + "连接由本应用处理，AI 会话无需关心配对/端口。");
         tip.setTextColor(0xFFCCCCCC);
         tip.setTextSize(12);
+        // 独立状态行（执行后自动刷新）
+        TextView statusLine = new TextView(this);
+        statusLine.setText("连接状态：" + status);
+        statusLine.setTextColor(status.contains("已连接") ? 0xFF7FDB8A : (status.contains("需配对") ? 0xFFFFD54F : 0xFFCCCCCC));
+        statusLine.setTextSize(13);
+        statusLine.setTypeface(null, android.graphics.Typeface.BOLD);
         int pad = (int) (16 * getResources().getDisplayMetrics().density);
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(pad, 8, pad, 0);
+        panel.addView(statusLine);
         panel.addView(tip);
         panel.addView(pairPort);
         panel.addView(pairCode);
@@ -199,7 +206,7 @@ public class MainActivity extends Activity {
         autoBtn.setText("自动连接（免配对直连）");
         autoBtn.setOnClickListener(v -> {
             saveAdbPrefs(prefs, pairPort, pairCode);
-            runAdbInGuest("adb-autoconnect", resultView);
+            runAdbInGuest("adb-autoconnect", resultView, statusLine);
         });
         panel.addView(autoBtn);
         // 配对并连接按钮：app 执行配对 + 自动扫描连接端口 + 连接（全程 app 处理）
@@ -214,7 +221,7 @@ public class MainActivity extends Activity {
                 resultView.setText("请先在手机上开启「无线调试」，抄下配对端口和 6 位配对码后填写。");
                 return;
             }
-            runAdbInGuest("adb-dopair " + pp + " " + pc, resultView);
+            runAdbInGuest("adb-dopair " + pp + " " + pc, resultView, statusLine);
         });
         panel.addView(pairBtn);
         new AlertDialog.Builder(this)
@@ -236,7 +243,7 @@ public class MainActivity extends Activity {
     }
 
     /** 在 guest 内直接执行 adb 命令（经 adb 服务，不依赖 reasonix/AI 会话），结果实时显示 */
-    private void runAdbInGuest(String cmd, TextView resultView) {
+    private void runAdbInGuest(String cmd, TextView resultView, TextView statusLine) {
         final String fcmd = cmd;
         resultView.setTextColor(0xFFFFD54F);
         resultView.setText("执行中...\n" + fcmd.trim());
@@ -246,6 +253,12 @@ public class MainActivity extends Activity {
                 resultView.setTextColor(out.contains("error") || out.contains("超时")
                         ? 0xFFFF6E6E : 0xFF7FDB8A);
                 resultView.setText(out);
+                if (statusLine != null) {
+                    String st = readAdbStatus();
+                    statusLine.setText("连接状态：" + st);
+                    statusLine.setTextColor(st.contains("已连接") ? 0xFF7FDB8A
+                            : (st.contains("需配对") ? 0xFFFFD54F : 0xFFCCCCCC));
+                }
             });
         }, "adb-exec").start();
     }

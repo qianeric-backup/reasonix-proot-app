@@ -113,20 +113,29 @@ if [ "$(adb_state)" = "device" ]; then
     exit 0
 fi
 echo "扫描 $HOST_IP:30000-49999 ...（约 10-40 秒）"
-PORT=$(seq 30000 49999 | xargs -P 100 -I{} sh -c 'nc -z -w1 '"$HOST_IP"' {} >/dev/null 2>&1 && echo {}' 2>/dev/null | sort -n | head -1)
-if [ -z "$PORT" ]; then
+PORTS=$(seq 30000 49999 | xargs -P 100 -I{} sh -c 'nc -z -w1 '"$HOST_IP"' {} >/dev/null 2>&1 && echo {}' 2>/dev/null | sort -n)
+if [ -z "$PORTS" ]; then
     status "no_port"
     echo "未找到开放端口。请确认手机已开启「无线调试」且与本机同 Wi-Fi。"
     exit 1
 fi
-echo "发现端口 $PORT，连接中 ..."
-adb connect "$HOST_IP:$PORT" >/dev/null 2>&1
-sleep 1
+echo "发现开放端口: $(echo $PORTS | tr '\n' ' ')"
+# 逐个试连（扫描到的可能是配对端口或连接端口；配对端口 connect 会 offline/拒绝，
+# 连接端口 connect 后 2-5 秒内变为 device）。找到 device 状态即成功。
+for P in $PORTS; do
+    echo "尝试连接 $HOST_IP:$P ..."
+    adb connect "$HOST_IP:$P" >/dev/null 2>&1
+    sleep 3
+    if adb devices 2>/dev/null | awk -v a="$HOST_IP:$P" '$1==a && $2=="device" {f=1} END{exit !f}'; then
+        status "connected $HOST_IP:$P"
+        echo "[adb] 连接成功 $HOST_IP:$P（免配对直连）"
+        adb devices -l
+        exit 0
+    fi
+done
 case "$(adb_state)" in
-    device) status "connected $HOST_IP:$PORT" ;;
     unauthorized) status "need_pair"; echo "设备未授权：请在手机无线调试页面完成配对（配对后免配对直连）" ;;
-    offline) status "need_pair"; echo "设备 offline：请先配对（配对码在手机「无线调试」页面）" ;;
-    *) status "disconnected" ;;
+    *) status "need_pair"; echo "未能连接（开放端口 $(echo $PORTS | tr '\n' ' ')）。请先配对：填写配对端口+配对码点「配对并连接」" ;;
 esac
 adb devices -l
 SH
@@ -148,21 +157,28 @@ echo "配对 $HOST_IP:$PP ..."
 adb pair "$HOST_IP:$PP" "$PC" 2>&1 | head -3
 sleep 1
 echo "扫描连接端口 30000-49999 ..."
-PORT=$(seq 30000 49999 | xargs -P 100 -I{} sh -c 'nc -z -w1 '"$HOST_IP"' {} >/dev/null 2>&1 && echo {}' 2>/dev/null | sort -n | head -1)
-if [ -z "$PORT" ]; then
+PORTS=$(seq 30000 49999 | xargs -P 100 -I{} sh -c 'nc -z -w1 '"$HOST_IP"' {} >/dev/null 2>&1 && echo {}' 2>/dev/null | sort -n)
+if [ -z "$PORTS" ]; then
     echo "未找到连接端口（请确认无线调试已开启）"
     echo "no_port" > /root/.adb_status
     exit 1
 fi
-echo "连接 $HOST_IP:$PORT ..."
-adb connect "$HOST_IP:$PORT"
+echo "发现开放端口: $(echo $PORTS | tr '\n' ' ')"
+# 逐个试连：配对端口 connect 会 offline/拒绝，连接端口 connect 后 2-5 秒变 device
+for P in $PORTS; do
+    echo "尝试连接 $HOST_IP:$P ..."
+    adb connect "$HOST_IP:$P" >/dev/null 2>&1
+    sleep 3
+    if adb devices 2>/dev/null | awk -v a="$HOST_IP:$P" '$1==a && $2=="device" {f=1} END{exit !f}'; then
+        echo "connected $HOST_IP:$P" > /root/.adb_status
+        echo "== 配对连接成功！reasonix 内可直接 adb shell / adb install =="
+        adb devices -l
+        exit 0
+    fi
+done
 adb devices -l
-if adb devices 2>/dev/null | awk 'NR>1 && $2=="device" {f=1} END{exit !f}'; then
-    echo "connected $HOST_IP:$PORT" > /root/.adb_status
-    echo "== 配对连接成功！reasonix 内可直接 adb shell / adb install =="
-else
-    echo "need_pair" > /root/.adb_status
-fi
+echo "need_pair" > /root/.adb_status
+echo "配对完成但连接未就绪（可能是配对码/端口已过期，请重新配对）"
 SH
     chmod 755 /usr/local/bin/adb-dopair
     # 5) 启动即自动重连：后台静默执行（不阻塞 reasonix 启动）
