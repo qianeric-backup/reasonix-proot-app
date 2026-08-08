@@ -1,4 +1,4 @@
-package com.rxproot.app;
+package com.rsxm.app;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
@@ -609,7 +609,7 @@ public class MainActivity extends Activity {
         return null;
     }
 
-    /** 更新 resonix：从手机选择新版文件，或恢复内置版本 */
+    /** 更新 reasonix：从手机选择新版文件，或恢复内置版本 */
     private void showUpdateResonixDialog() {
         EditText urlInput = createDarkEditText("reasonix 更新包链接 (.tgz)", InputType.TYPE_CLASS_TEXT);
         urlInput.setText(REASONIX_DEFAULT_URL);
@@ -665,7 +665,7 @@ public class MainActivity extends Activity {
         panel.addView(tip);
         panel.addView(urlInput);
         new AlertDialog.Builder(this)
-                .setTitle("更新 resonix")
+                .setTitle("更新 reasonix")
                 .setView(panel)
                 .setPositiveButton("网络更新", (d, w) -> {
                     String url = urlInput.getText().toString().trim();
@@ -689,7 +689,7 @@ public class MainActivity extends Activity {
     private void updateFromNetwork(String url) {
         new Thread(() -> {
             try {
-                pushOutput("\r\n[正在下载 resonix 更新包...]\r\n");
+                pushOutput("\r\n[正在下载 reasonix 更新包...]\r\n");
                 File tmp = new File(getCacheDir(), "reasonix-update.tgz");
                 long total = 0;
                 try (InputStream in = new URL(url).openStream();
@@ -721,7 +721,7 @@ public class MainActivity extends Activity {
                                 mv.group(1).getBytes(StandardCharsets.UTF_8));
                     }
                 } catch (Exception ignored) {}
-                pushOutput("\r\n[resonix 已更新（" + rx.length() + " 字节），正在重启环境...]\r\n");
+                pushOutput("\r\n[reasonix 已更新（" + rx.length() + " 字节），正在重启环境...]\r\n");
                 restartEnvironment();
             } catch (Exception e) {
                 pushOutput("\r\n[更新失败] " + e + "\r\n");
@@ -793,7 +793,7 @@ public class MainActivity extends Activity {
             extractAsset("usr/bin/reasonix", rx);
             rx.setExecutable(true, false);
             Log.d(TAG, "reasonix restored from bundle");
-            pushOutput("\r\n[已恢复内置 resonix，正在重启环境...]\r\n");
+            pushOutput("\r\n[已恢复内置 reasonix，正在重启环境...]\r\n");
             restartEnvironment();
         } catch (Exception e) {
             Log.e(TAG, "restore reasonix failed", e);
@@ -818,7 +818,7 @@ public class MainActivity extends Activity {
                 Log.d(TAG, "reasonix updated, size=" + total);
             }
             rx.setExecutable(true, false);
-            pushOutput("\r\n[resonix 已更新（" + rx.length() + " 字节），正在重启环境...]\r\n");
+            pushOutput("\r\n[reasonix 已更新（" + rx.length() + " 字节），正在重启环境...]\r\n");
             restartEnvironment();
         } catch (Exception e) {
             Log.e(TAG, "apply reasonix update failed", e);

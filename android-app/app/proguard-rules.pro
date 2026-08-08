@@ -2,7 +2,7 @@
 
 # 主 Activity 通过 WebView 的 @JavascriptInterface 桥接 JS<->Java，
 # 必须整体保留（方法名被混淆会导致 window.onTermData 等调用失败）。
--keep class com.rxproot.app.MainActivity { *; }
+-keep class com.rsxm.app.MainActivity { *; }
 
 # Android WebView / 系统组件
 -keep class android.webkit.** { *; }

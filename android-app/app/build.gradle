@@ -3,11 +3,11 @@ plugins {
 }
 
 android {
-    namespace 'com.rxproot.app'
+    namespace 'com.rsxm.app'
     compileSdk 34
 
     defaultConfig {
-        applicationId "com.rxproot.app"
+        applicationId "com.rsxm.app"
         minSdk 26
         targetSdk 34
         versionCode 1
