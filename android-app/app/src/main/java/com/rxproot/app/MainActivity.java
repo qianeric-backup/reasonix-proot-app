@@ -617,14 +617,48 @@ public class MainActivity extends Activity {
         panel.setOrientation(LinearLayout.VERTICAL);
         int pad = dp(16);
         panel.setPadding(pad, dp(8), pad, 0);
-        // 当前版本（从 guest 内 reasonix 二进制的 Go buildinfo 提取，纯本地读取）
-        String ver = extractReasonixVersion(new File(new File(getFilesDir(), "rootfs/usr/local/bin"), "reasonix"));
+        // 当前版本：优先显示记录的 npm 版本（.npm-version），否则从 Go buildinfo 提取
+        String npmVer = null;
+        File vf = new File(new File(new File(getFilesDir(), "rootfs/root"), ".reasonix"), ".npm-version");
+        if (vf.exists()) {
+            try {
+                npmVer = new String(java.nio.file.Files.readAllBytes(vf.toPath()), StandardCharsets.UTF_8).trim();
+            } catch (Exception ignored) {}
+        }
+        String ver = (npmVer != null && !npmVer.isEmpty()) ? "v" + npmVer
+                : extractReasonixVersion(new File(new File(getFilesDir(), "rootfs/usr/local/bin"), "reasonix"));
         TextView verView = new TextView(this);
         verView.setText("当前版本：" + (ver != null ? ver : "未知（内置 1.20.0）"));
         verView.setTextColor(0xFF7FDB8A);
         verView.setTextSize(14);
         verView.setTypeface(null, android.graphics.Typeface.BOLD);
         panel.addView(verView);
+        // 异步查询最新版本并自动填入最新下载链接
+        final String curVer = ver;
+        new Thread(() -> {
+            try {
+                java.net.URL u = new java.net.URL("https://registry.npmmirror.com/@reasonix/cli-linux-arm64/latest");
+                byte[] buf = new byte[8192];
+                int n;
+                StringBuilder sb = new StringBuilder();
+                try (java.io.InputStream in = u.openStream()) {
+                    while ((n = in.read(buf)) > 0) sb.append(new String(buf, 0, n, StandardCharsets.UTF_8));
+                }
+                java.util.regex.Matcher mv = java.util.regex.Pattern
+                        .compile("\"version\"\\s*:\\s*\"([\\d.]+)\"").matcher(sb.toString());
+                if (mv.find()) {
+                    final String latest = mv.group(1);
+                    runOnUiThread(() -> {
+                        verView.setText("当前版本：" + (curVer != null ? curVer : "未知")
+                                + "　最新版本：v" + latest);
+                        urlInput.setText("https://registry.npmmirror.com/@reasonix/cli-linux-arm64/-/cli-linux-arm64-"
+                                + latest + ".tgz");
+                    });
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "query latest version failed", e);
+            }
+        }, "rx-ver-check").start();
         TextView tip = createDarkTip("官方源：@reasonix/cli-linux-arm64（npm 平台包）\n"
                 + "可修改下方链接更新到其它版本。\n"
                 + "或从手机选择新版文件 / 恢复内置版本。");
@@ -678,6 +712,15 @@ public class MainActivity extends Activity {
                 }
                 rx.setExecutable(true, false);
                 tmp.delete();
+                // 记录 npm 版本号（buildinfo 是 git pseudo-version，显示友好版本用）
+                try {
+                    java.util.regex.Matcher mv = java.util.regex.Pattern
+                            .compile("cli-linux-arm64-(\\d+\\.\\d+\\.\\d+)").matcher(url);
+                    if (mv.find()) {
+                        java.nio.file.Files.write(new File(rootfs, "root/.reasonix/.npm-version").toPath(),
+                                mv.group(1).getBytes(StandardCharsets.UTF_8));
+                    }
+                } catch (Exception ignored) {}
                 pushOutput("\r\n[resonix 已更新（" + rx.length() + " 字节），正在重启环境...]\r\n");
                 restartEnvironment();
             } catch (Exception e) {
@@ -1069,11 +1112,16 @@ public class MainActivity extends Activity {
 
     /** 覆盖安装后刷新可更新的 assets（entry.sh/reasonix/pty-bridge 随 APK 版本更新） */
     private void refreshAssets(File files, File rootfs) throws IOException {
-        // reasonix
+        // reasonix：仅在不存在时复制（保留用户通过网络/文件更新过的版本，不被内置版覆盖）
         File rx = new File(rootfs, "usr/local/bin/reasonix");
-        rx.getParentFile().mkdirs();
-        extractAsset("usr/bin/reasonix", rx);
-        rx.setExecutable(true, false);
+        if (!rx.exists()) {
+            rx.getParentFile().mkdirs();
+            extractAsset("usr/bin/reasonix", rx);
+            rx.setExecutable(true, false);
+            Log.d(TAG, "reasonix deployed from bundle (first time)");
+        } else {
+            Log.d(TAG, "reasonix exists, keep current version");
+        }
         // pty-bridge
         File bridge = new File(rootfs, "usr/bin/pty-bridge");
         bridge.getParentFile().mkdirs();
