@@ -179,9 +179,8 @@ public class MainActivity extends Activity {
         TextView tip = new TextView(this);
         tip.setText("本机 IP：" + ip + "\n连接状态：" + status + "\n\n"
                 + "1. 手机：设置 -> 开发者选项 -> 无线调试 -> 打开，抄下配对码与两个端口\n"
-                + "2. 首次使用：填写配对端口+配对码点「发送到终端」（自动配对+连接+检查）\n"
+                + "2. 首次使用：填写配对端口+配对码，点「配对并连接」（直接执行，不经过 reasonix）\n"
                 + "3. 之后免配对：点「自动连接」自动扫描端口并直连（无需填连接端口）\n"
-                + "   提示：发送前请在 reasonix 中输入 exit 退到 shell\n"
                 + "4. 或点「复制命令」自行粘贴执行\n\n"
                 + "连接成功后即可 adb shell / adb install 等操作本手机。");
         tip.setTextColor(0xFFCCCCCC);
@@ -194,25 +193,37 @@ public class MainActivity extends Activity {
         panel.addView(pairPort);
         panel.addView(pairCode);
         panel.addView(connPort);
-        // 自动连接按钮：触发 guest 内 adb-autoconnect（扫描 30000-49999 并 connect）
+        // 执行结果区（adb 输出实时显示，不依赖 reasonix 会话）
+        TextView resultView = new TextView(this);
+        resultView.setTextColor(0xFF7FDB8A);
+        resultView.setTextSize(11);
+        resultView.setTypeface(android.graphics.Typeface.MONOSPACE);
+        resultView.setText("（执行结果将显示在这里）");
+        resultView.setMinHeight(0);
+        panel.addView(resultView);
+        // 自动连接按钮：app 直接驱动 guest 内 adb-autoconnect（扫描 30000-49999 并 connect）
         Button autoBtn = new Button(this);
         autoBtn.setText("自动连接（扫描端口并直连）");
         autoBtn.setOnClickListener(v -> {
             saveAdbPrefs(prefs, pairPort, pairCode, connPort);
-            sendToTerminal("adb-autoconnect\n");
+            runAdbInGuest("adb-autoconnect", resultView);
         });
         panel.addView(autoBtn);
+        // 配对并连接按钮：app 直接执行配对+连接+检查
+        Button pairBtn = new Button(this);
+        pairBtn.setText("配对并连接");
+        pairBtn.setOnClickListener(v -> {
+            saveAdbPrefs(prefs, pairPort, pairCode, connPort);
+            String cmd = buildAdbCommands(fip,
+                    pairPort.getText().toString().trim(),
+                    pairCode.getText().toString().trim(),
+                    connPort.getText().toString().trim());
+            runAdbInGuest(cmd, resultView);
+        });
+        panel.addView(pairBtn);
         new AlertDialog.Builder(this)
                 .setTitle("ADB 无线调试")
                 .setView(panel)
-                .setPositiveButton("发送到终端", (d, w) -> {
-                    saveAdbPrefs(prefs, pairPort, pairCode, connPort);
-                    String cmd = buildAdbCommands(fip,
-                            pairPort.getText().toString().trim(),
-                            pairCode.getText().toString().trim(),
-                            connPort.getText().toString().trim());
-                    sendToTerminal(cmd);
-                })
                 .setNeutralButton("复制命令", (d, w) -> {
                     saveAdbPrefs(prefs, pairPort, pairCode, connPort);
                     String cmd = buildAdbCommands(fip,
@@ -226,14 +237,51 @@ public class MainActivity extends Activity {
                         Log.w(TAG, "clipboard failed", e);
                     }
                 })
-                .setNegativeButton("无线调试设置", (d, w) -> {
-                    try {
-                        startActivity(new Intent("android.settings.WIRELESS_DEBUGGING_SETTINGS"));
-                    } catch (Exception e) {
-                        Log.w(TAG, "cannot open wireless debugging settings", e);
-                    }
-                })
                 .show();
+    }
+
+    /** 在 guest 内直接执行 adb 命令（经 adb 服务，不依赖 reasonix/AI 会话），结果实时显示 */
+    private void runAdbInGuest(String cmd, TextView resultView) {
+        final String fcmd = cmd;
+        resultView.setTextColor(0xFFFFD54F);
+        resultView.setText("执行中...\n" + fcmd.trim());
+        new Thread(() -> {
+            String out = executeInGuest(fcmd, 150);
+            runOnUiThread(() -> {
+                resultView.setTextColor(out.contains("error") || out.contains("超时")
+                        ? 0xFFFF6E6E : 0xFF7FDB8A);
+                resultView.setText(out);
+            });
+        }, "adb-exec").start();
+    }
+
+    /** 写入命令到 guest adb 服务并轮询结果（.adb-cmd → 执行 → .adb-out 含 __DONE__ 标记） */
+    private String executeInGuest(String cmd, int timeoutSec) {
+        try {
+            File root = new File(new File(getFilesDir(), "rootfs"), "root");
+            File cmdFile = new File(root, ".adb-cmd");
+            File outFile = new File(root, ".adb-out");
+            outFile.delete();
+            java.nio.file.Files.write(cmdFile.toPath(), cmd.getBytes(StandardCharsets.UTF_8));
+            long deadline = System.currentTimeMillis() + timeoutSec * 1000L;
+            while (System.currentTimeMillis() < deadline) {
+                Thread.sleep(300);
+                if (outFile.exists()) {
+                    String out = new String(java.nio.file.Files.readAllBytes(outFile.toPath()),
+                            StandardCharsets.UTF_8);
+                    if (out.contains("__DONE__")) {
+                        outFile.delete();
+                        String r = out.replace("__DONE__", "").trim();
+                        Log.d(TAG, "adb out: " + r);
+                        return r.isEmpty() ? "(无输出)" : r;
+                    }
+                }
+            }
+            return "(执行超时 " + timeoutSec + " 秒)";
+        } catch (Exception e) {
+            Log.w(TAG, "executeInGuest failed", e);
+            return "(执行失败: " + e + ")";
+        }
     }
 
     /** 保存 ADB 配对信息（下次打开自动填充） */

@@ -132,6 +132,24 @@ SH
     chmod 755 /usr/local/bin/adb-autoconnect
     # 5) 启动即自动重连：后台静默执行（不阻塞 reasonix 启动）
     ( sleep 4; adb-autoconnect >/tmp/adb-auto.log 2>&1 || true ) &
+
+    # ADB 独立执行服务：app 侧把命令写入 /root/.adb-cmd，此循环执行并把
+    # 结果写入 /root/.adb-out（末尾追加 __DONE__ 标记）。使 ADB 无线调试
+    # 直接由 app 驱动，不依赖 reasonix（AI）会话。
+    (
+        touch /root/.adb-service
+        while [ -f /root/.adb-service ]; do
+            if [ -s /root/.adb-cmd ]; then
+                CMD=$(cat /root/.adb-cmd)
+                rm -f /root/.adb-cmd
+                {
+                    eval "$CMD"
+                } > /root/.adb-out 2>&1
+                echo "__DONE__" >> /root/.adb-out
+            fi
+            sleep 0.3
+        done
+    ) &
 fi
 
 # 直接进入 reasonix 交互会话；退出后落到 shell

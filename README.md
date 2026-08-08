@@ -78,8 +78,9 @@ adb install reasonix-proot.apk
 ### ADB 无线调试（用 guest 内 adb 调试本手机）
 
 1. 手机：设置 → 开发者选项 → 无线调试 → 打开，记下配对码与配对/连接端口。
-2. 侧滑菜单 → **ADB 无线调试** → 填入配对码/端口 → **发送到终端**（先输入 `exit` 退到 shell）。
-3. 自动执行 `adb pair` + `adb connect` + `adb devices`，连接成功即可 `adb shell` / `adb install`。
+2. 侧滑菜单 → **ADB 无线调试** → 填入配对码/端口 → 点「配对并连接」或「自动连接」
+   （由应用直接驱动容器内 adb 执行并回显结果，**不依赖 reasonix 会话**）。
+3. 连接成功（状态变「已连接」）后，在 reasonix 终端里即可 `adb shell` / `adb install`。
 
 ### 更新 resonix
 
