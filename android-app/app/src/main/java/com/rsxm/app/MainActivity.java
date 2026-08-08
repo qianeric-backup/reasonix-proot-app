@@ -1042,6 +1042,28 @@ public class MainActivity extends Activity {
             String content = conf.exists()
                     ? new String(java.nio.file.Files.readAllBytes(conf.toPath()), StandardCharsets.UTF_8)
                     : "";
+            // 显式配置 [desktop] telemetry = false（非默认值 → reasonix 视为已确认遥测，消除"Accept and continue?"询问）
+            if (content.contains("telemetry = false") || content.contains("telemetry = %v")
+                    || content.matches("(?ms).*^\\s*telemetry\\s*=\\s*true.*")) {
+                content = content.replaceAll("(?m)^\\s*telemetry\\s*=\\s*true\\s*#.*$", "telemetry = false")
+                        .replaceAll("(?m)^\\s*telemetry\\s*=\\s*%v.*$", "telemetry = false");
+                if (!content.contains("[desktop]")) {
+                    content += "\n[desktop]\ntelemetry = false\n";
+                }
+                java.nio.file.Files.write(conf.toPath(), content.getBytes(StandardCharsets.UTF_8));
+                Log.d(TAG, "reasonix telemetry set false");
+            }
+            // 确保 AI 系统提示含 adb/root 能力说明（reasonix 探测不到但实际可用，注入提示让 AI 知道）。
+            // 注意：reasonix 默认模板含 `# system_prompt = ...` 注释，contains 判断会被注释误伤，须匹配非注释键。
+            if (!java.util.regex.Pattern.compile("(?m)^\\s*system_prompt\\s*=").matcher(content).find()) {
+                content += "\nsystem_prompt = \"\"\"\n"
+                        + "环境能力说明（按需使用，不要编造）：\n"
+                        + "1. 本应用内置 adb 无线调试：可直接执行 adb 命令（先 adb devices 查看连接状态，已连接时可用 adb shell / adb install 等）。\n"
+                        + "2. 本应用内置手机 root 权限桥：执行 `root <命令>` 以 root 权限运行宿主手机命令（如 root id、root 'pm list packages'）。\n"
+                        + "\"\"\"\n";
+                java.nio.file.Files.write(conf.toPath(), content.getBytes(StandardCharsets.UTF_8));
+                Log.d(TAG, "reasonix system_prompt injected");
+            }
             if (content.contains("bash = \"off\"")) {
                 Log.d(TAG, "reasonix sandbox already disabled");
                 return;
@@ -1087,7 +1109,15 @@ public class MainActivity extends Activity {
         try {
             home.mkdirs();
             String configToml = "default_model = \"deepseek-flash\"\n"
+                    + "\n"
+                    + "[desktop]\n"
                     + "telemetry = false\n"
+                    + "\n"
+                    + "system_prompt = \"\"\"\n"
+                    + "环境能力说明（按需使用，不要编造）：\n"
+                    + "1. 本应用内置 adb 无线调试：可直接执行 adb 命令（先 adb devices 查看连接状态，已连接时可用 adb shell / adb install 等）。\n"
+                    + "2. 本应用内置手机 root 权限桥：执行 `root <命令>` 以 root 权限运行宿主手机命令（如 root id、root 'pm list packages'）。\n"
+                    + "\"\"\"\n"
                     + "\n"
                     + "[[providers]]\n"
                     + "name        = \"deepseek-flash\"\n"

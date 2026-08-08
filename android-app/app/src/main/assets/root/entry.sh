@@ -229,6 +229,9 @@ chmod 755 /usr/local/bin/root
         done
     ) &
 
+# 关闭 reasonix 遥测确认提示（REASONIX_TELEMETRY=0 / DO_NOT_TRACK 等效）
+export REASONIX_TELEMETRY=0
+
 # 直接进入 reasonix 交互会话；退出后落到 shell
 if command -v reasonix >/dev/null 2>&1; then
   reasonix
