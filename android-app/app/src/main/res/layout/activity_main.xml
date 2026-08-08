@@ -89,7 +89,7 @@
                     android:background="#141414"
                     android:gravity="center_vertical"
                     android:paddingLeft="16dp"
-                    android:text="&#128268;  ADB 无线调试"
+                    android:text="ADB 无线调试"
                     android:textColor="#FFFFFF"
                     android:textSize="15sp" />
 
@@ -101,7 +101,7 @@
                     android:layout_marginTop="1dp"
                     android:gravity="center_vertical"
                     android:paddingLeft="16dp"
-                    android:text="&#128273;  API Key 配置"
+                    android:text="API Key 配置"
                     android:textColor="#FFFFFF"
                     android:textSize="15sp" />
 
@@ -113,7 +113,7 @@
                     android:layout_marginTop="1dp"
                     android:gravity="center_vertical"
                     android:paddingLeft="16dp"
-                    android:text="&#128260;  更新 resonix"
+                    android:text="更新 resonix"
                     android:textColor="#FFFFFF"
                     android:textSize="15sp" />
 
@@ -125,7 +125,7 @@
                     android:layout_marginTop="1dp"
                     android:gravity="center_vertical"
                     android:paddingLeft="16dp"
-                    android:text="&#9200;  后台运行模式：关"
+                    android:text="后台运行模式：关"
                     android:textColor="#FFFFFF"
                     android:textSize="15sp" />
             </LinearLayout>

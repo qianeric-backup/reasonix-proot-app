@@ -144,7 +144,7 @@ public class MainActivity extends Activity {
         boolean on = getSharedPreferences("prefs", MODE_PRIVATE).getBoolean("background_mode", false);
         TextView tv = findViewById(R.id.menu_bgmode);
         if (tv != null) {
-            tv.setText(on ? "\u23F0  后台运行模式：开" : "\u23F0  后台运行模式：关");
+            tv.setText(on ? "后台运行模式：开" : "后台运行模式：关");
             tv.setTextColor(on ? 0xFF4CAF50 : 0xFFFFFFFF);
         }
     }

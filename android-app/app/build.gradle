@@ -16,6 +16,13 @@ android {
 
     buildTypes {
         release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            // 用 debug keystore 签名 release（个人分发，无需正式证书）
+            signingConfig signingConfigs.debug
+        }
+        debug {
             minifyEnabled false
         }
     }
@@ -34,6 +41,7 @@ android {
 }
 
 dependencies {
+    // DrawerLayout 自带传递依赖 androidx.core（1.2.0），足够满足 GravityCompat 使用，
+    // 无需显式引入大体积的 core 1.13.1（会带入 lifecycle/concurrent 等大量多余代码）。
     implementation 'androidx.drawerlayout:drawerlayout:1.2.0'
-    implementation 'androidx.core:core:1.13.1'
 }

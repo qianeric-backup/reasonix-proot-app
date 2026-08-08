@@ -57,10 +57,10 @@
 cd android-app
 set JAVA_HOME=C:\path\to\jdk-17
 set ANDROID_HOME=C:\path\to\android-sdk
-call gradlew.bat assembleDebug
+call gradlew.bat assembleRelease
 ```
 
-产物：`android-app/app/build/outputs/apk/debug/app-debug.apk`。
+产物：`android-app/app/build/outputs/apk/release/app-release.apk`（R8 混淆 + 资源压缩，约 16MB）。
 
 > `android-app/local.properties` 需指向本机 SDK（未入库）。重编译 proot/pty-bridge 需要 [zig](https://ziglang.org/download)（详见 `android-app/README.md`）。
 
