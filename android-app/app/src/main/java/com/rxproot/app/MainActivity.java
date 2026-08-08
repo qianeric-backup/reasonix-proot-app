@@ -76,6 +76,9 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // 重新打开（Activity 重建）时清理上次残留的 proot/pty-bridge/reasonix 进程，
+        // 避免双环境并存的 PTY 竞争导致 reasonix CLI 排版错乱。
+        killProotTree();
 
         webView = new WebView(this);
         WebSettings s = webView.getSettings();
@@ -583,6 +586,29 @@ public class MainActivity extends Activity {
                 .show();
     }
 
+    /** 从 Go 二进制提取模块版本（buildinfo：`mod\t...\tvX.Y.Z`，位于文件尾部） */
+    private String extractReasonixVersion(File bin) {
+        if (bin == null || !bin.exists()) return null;
+        try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(bin, "r")) {
+            long len = raf.length();
+            long start = Math.max(0, len - (2L * 1024 * 1024));   // Go buildinfo 距文件尾可达 1.5MB+，读 2MB
+            raf.seek(start);
+            byte[] tail = new byte[(int) (len - start)];
+            raf.readFully(tail);
+            String s = new String(tail, StandardCharsets.ISO_8859_1);
+            int idx = s.indexOf("mod\t");
+            if (idx >= 0) {
+                String mod = s.substring(idx, Math.min(s.length(), idx + 150));
+                java.util.regex.Matcher m = java.util.regex.Pattern
+                        .compile("mod\\t\\S+\\tv([\\d.]+[\\w.-]*)").matcher(mod);
+                if (m.find()) return "v" + m.group(1);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "extract version failed", e);
+        }
+        return null;
+    }
+
     /** 更新 resonix：从手机选择新版文件，或恢复内置版本 */
     private void showUpdateResonixDialog() {
         EditText urlInput = createDarkEditText("reasonix 更新包链接 (.tgz)", InputType.TYPE_CLASS_TEXT);
@@ -591,6 +617,14 @@ public class MainActivity extends Activity {
         panel.setOrientation(LinearLayout.VERTICAL);
         int pad = dp(16);
         panel.setPadding(pad, dp(8), pad, 0);
+        // 当前版本（从 guest 内 reasonix 二进制的 Go buildinfo 提取，纯本地读取）
+        String ver = extractReasonixVersion(new File(new File(getFilesDir(), "rootfs/usr/local/bin"), "reasonix"));
+        TextView verView = new TextView(this);
+        verView.setText("当前版本：" + (ver != null ? ver : "未知（内置 1.20.0）"));
+        verView.setTextColor(0xFF7FDB8A);
+        verView.setTextSize(14);
+        verView.setTypeface(null, android.graphics.Typeface.BOLD);
+        panel.addView(verView);
         TextView tip = createDarkTip("官方源：@reasonix/cli-linux-arm64（npm 平台包）\n"
                 + "可修改下方链接更新到其它版本。\n"
                 + "或从手机选择新版文件 / 恢复内置版本。");
@@ -1010,6 +1044,7 @@ public class MainActivity extends Activity {
         try {
             home.mkdirs();
             String configToml = "default_model = \"deepseek-flash\"\n"
+                    + "telemetry = false\n"
                     + "\n"
                     + "[[providers]]\n"
                     + "name        = \"deepseek-flash\"\n"
@@ -1110,6 +1145,11 @@ public class MainActivity extends Activity {
 
     /** 启动 proot（从 nativeLibraryDir 执行）-> Alpine -> pty-bridge(PTY) -> entry.sh -> reasonix */
     private void startProot(File files, File rootfs) throws IOException {
+        // 防重复启动：环境已在运行时直接跳过（onCreate 已 kill 旧环境，此为双保险）
+        if (prootProcess != null && prootProcess.isAlive()) {
+            Log.d(TAG, "proot already running, skip start");
+            return;
+        }
         // SELinux 只允许 app 执行 APK native libs 目录（apk_data_file）里的 ELF，
         // 因此 proot、libtalloc、libandroid-shmem、loader 全部打包在 jniLibs，
         // 经 useLegacyPackaging 解压到 nativeLibraryDir 后从这里直接执行。
