@@ -380,6 +380,33 @@ public class MainActivity extends Activity {
         return (int) (v * getResources().getDisplayMetrics().density + 0.5f);
     }
 
+    /** 在 API Key 面板内嵌充值方式指引（内置在应用内，含打开充值页按钮） */
+    private void addRechargeGuide(LinearLayout panel) {
+        TextView title = new TextView(this);
+        title.setText("充值方式（DeepSeek 开放平台）");
+        title.setTextColor(0xFFFFFFFF);
+        title.setTextSize(13);
+        title.setTypeface(null, android.graphics.Typeface.BOLD);
+        title.setPadding(dp(2), dp(14), dp(2), dp(6));
+        panel.addView(title);
+        panel.addView(createDarkTip(
+                "1. 手机/电脑浏览器打开 platform.deepseek.com 并登录\n"
+                        + "2. 左侧菜单点「充值」（费用与充值）\n"
+                        + "3. 输入金额（最低 ¥10），支持支付宝/微信支付\n"
+                        + "4. 到账后即可使用；新用户有赠送额度，可先体验\n"
+                        + "5. API Key 在「API Keys」页面创建后填入上方输入框"));
+        Button openBtn = createDarkButton("打开充值页");
+        openBtn.setOnClickListener(v -> {
+            try {
+                startActivity(new Intent(Intent.ACTION_VIEW,
+                        Uri.parse("https://platform.deepseek.com/top_up")));
+            } catch (Exception e) {
+                Log.w(TAG, "open recharge page failed", e);
+            }
+        });
+        panel.addView(openBtn);
+    }
+
     /** 深色输入框（原生 Material 下划线风格，背景透明保持纯黑） */
     private EditText createDarkEditText(String hint, int inputType) {
         EditText et = new EditText(this);
@@ -652,6 +679,7 @@ public class MainActivity extends Activity {
         panel.setPadding(dp(16), dp(8), dp(16), 0);
         panel.addView(createDarkTip("当前模型：deepseek-v4-flash（api.deepseek.com）"));
         panel.addView(input);
+        addRechargeGuide(panel);
         Button saveBtn = createDarkButton("保存");
         saveBtn.setOnClickListener(v -> {
             String key = input.getText().toString().trim();
