@@ -1164,8 +1164,10 @@ public class MainActivity extends Activity {
             safeStartProot();
             return;
         }
-        Log.d(TAG, "reasonix config missing, showing API key dialog");
-        ui.post(() -> showApiKeyDialog(rootfs, home, cfg, env));
+        // 全新安装不再弹出 API Key 配置页面：直接启动环境。
+        // 用户可随时通过侧滑菜单「API Key 配置」面板填写 Key（面板内置充值指引）。
+        Log.d(TAG, "reasonix config missing, starting without API key dialog");
+        safeStartProot();
     }
 
     /** 确保 reasonix 的 bash 沙箱关闭（Android 无 bubblewrap，enforce 会拒绝所有 shell 命令） */
@@ -1214,36 +1216,6 @@ public class MainActivity extends Activity {
         } catch (Exception e) {
             Log.w(TAG, "failed to disable reasonix sandbox", e);
         }
-    }
-
-    private void showApiKeyDialog(final File rootfs, final File home, final File cfg, final File env) {
-        final EditText input = createDarkEditText("sk-...（DeepSeek API Key）",
-                InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        LinearLayout panel = new LinearLayout(this);
-        panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(16), dp(8), dp(16), 0);
-        panel.addView(createDarkTip("首次使用需要 DeepSeek API Key（platform.deepseek.com 获取）。\n"
-                + "保存后自动进入 reasonix；也可稍后在终端运行 reasonix setup 修改。"));
-        panel.addView(input);
-        Button saveBtn = createDarkButton("保存并启动");
-        saveBtn.setOnClickListener(v -> {
-            String key = input.getText().toString().trim();
-            if (!key.isEmpty()) {
-                writeReasonixConfig(home, cfg, env, key);
-            } else {
-                Log.w(TAG, "empty API key, starting without config");
-            }
-            hidePanel();   // onClose 回调 → safeStartProot
-        });
-        panel.addView(saveBtn);
-        Button skipBtn = createDarkButton("跳过");
-        skipBtn.setOnClickListener(v -> {
-            Log.d(TAG, "skipped API key dialog");
-            hidePanel();   // onClose 回调 → safeStartProot
-        });
-        panel.addView(skipBtn);
-        // 全屏面板展示；无论保存/跳过/返回关闭，环境照常启动（保持原 onDismiss 语义）
-        showPanel("配置 Reasonix API Key", panel, this::safeStartProot);
     }
 
     /** 写入 reasonix 配置（config.toml + .env，DeepSeek provider）；文件很小，同步执行 */
