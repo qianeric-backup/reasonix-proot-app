@@ -261,7 +261,7 @@ SH
                 rm -f /root/.adb-cmd
                 {
                     hash -r 2>/dev/null   # 清命令缓存：确保 adb 解析到 /usr/local/bin wrapper（root 直连）
-                    eval "$CMD"
+                    timeout 20 sh -c "$CMD" 2>/dev/null || true   # timeout 防 TUI 类命令无 TTY 卡死服务循环
                 } > /root/.adb-out 2>&1
                 echo "__DONE__" >> /root/.adb-out
             fi
@@ -282,6 +282,26 @@ rm -f /root/.reasonix/projects/*/sessions/*.recovery.json \
 # reasonix 启动包装：保证每次启动（含退出后再次运行、更新后重启）都全新进入 TUI（alt screen）。
 # 将真实二进制改名为 reasonix.bin，用 wrapper 替代 reasonix——无论 entry.sh 首次启动
 # 还是用户在 shell 里再次输入 reasonix，都会先清理会话恢复标记再启动。
+
+# 环境说明（reasonix 项目记忆 AGENTS.md，启动自动加载）：告知 AI 本环境是 Android 手机
+# proot 容器，adb shell 经 root 命令桥直连手机（无需无线调试），可打开应用/模拟操作。
+cat > /root/AGENTS.md <<'MD'
+# RSXM 环境说明
+
+本环境是运行在 **Android 手机** 上的 Alpine Linux proot 容器（不是服务器，也不是远程机器）。
+用户要求"打开/操作手机上的应用"时，直接用下面的 adb shell 命令即可完成。
+
+## 控制宿主手机（重要）
+- `adb shell <命令>` 会直接通过**手机的 root 权限**（root 命令桥）执行，**无需无线调试连接**。
+  `adb devices` 显示 `no devices/emulators found` 是正常现象（命令实际走 root 桥执行）。
+- 打开应用：`adb shell am start -n <包名>/<Activity>`，例如打开微信：
+  `adb shell am start -n com.tencent.mm/.ui.LauncherUI`
+- 常用手机操作（root 直连）：
+  - 模拟点击/输入：`adb shell input tap X Y`、`adb shell input text 内容`、`adb shell input keyevent 4`
+  - 包管理：`adb shell pm list packages`、`adb shell pm disable-user --user 0 <包名>`
+  - 系统设置：`adb shell settings put global ...`
+- 若手机没有 root（无 su），`adb shell` 会回退到无线调试（需要先配对连接）。
+MD
 # 幂等/更新安全：reasonix 更新会覆盖 wrapper 位置（写入新二进制），entry.sh 检测到
 # reasonix 不是 wrapper（首行无标记）时，把新二进制备份为 reasonix.bin 并重建 wrapper；
 # restartEnvironment 必走 entry.sh，因此更新后自动重新包装。
