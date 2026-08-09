@@ -10,6 +10,12 @@
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <!-- 后台运行模式保活：前台服务提升进程优先级，adb 打开其他应用后环境继续在后台运行 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Android 14 (API 34)+：前台服务必须声明类型，本服务用途为特殊用例（保活） -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Android 13 (API 33)+：通知需运行时权限，未授权时服务照常运行仅通知不可见 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:label="RSXM"
@@ -27,5 +33,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 后台运行模式保活服务（前台服务，生命周期由开关控制，与 Activity 解耦） -->
+        <service
+            android:name=".BackgroundService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse" />
     </application>
 </manifest>

@@ -65,8 +65,12 @@ public class MainActivity extends Activity {
             "https://registry.npmmirror.com/@reasonix/cli-linux-arm64/-/cli-linux-arm64-1.21.1.tgz";
 
     private WebView webView;
-    private Process prootProcess;
-    private OutputStream procIn;
+    // proot 进程与输入流静态持有：后台运行模式下与 Activity 生命周期解耦，
+    // Activity 重建（系统回收/返回后重开）时无需重启环境，终端 I/O 可无缝续接。
+    private static volatile Process sProotProcess;
+    private static volatile OutputStream sProcIn;
+    /** 当前活动实例：后台 reader 线程输出经它转发到活动终端（重建后指向新实例） */
+    private static volatile MainActivity sCurrent;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private volatile boolean environmentStarted = false;
     private DrawerLayout drawerLayout;
@@ -76,9 +80,20 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        sCurrent = this;
         // 重新打开（Activity 重建）时清理上次残留的 proot/pty-bridge/reasonix 进程，
         // 避免双环境并存的 PTY 竞争导致 reasonix CLI 排版错乱。
-        killProotTree();
+        // 例外：后台运行模式下旧环境仍在运行 → 直接复用（进程/流静态持有，与 Activity
+        // 解耦，终端 I/O 无缝续接），不清理不重启，避免 AI 会话在后台中断。
+        boolean bgMode = getSharedPreferences("prefs", MODE_PRIVATE)
+                .getBoolean("background_mode", false);
+        if (bgMode && sProotProcess != null && sProotProcess.isAlive()) {
+            environmentStarted = true;
+            startRootPolling();   // 复用环境：恢复 root 命令桥轮询（onDestroy 已停）
+            Log.d(TAG, "background mode: reusing running proot environment");
+        } else {
+            killProotTree();
+        }
 
         webView = new WebView(this);
         WebSettings s = webView.getSettings();
@@ -130,17 +145,29 @@ public class MainActivity extends Activity {
         findViewById(R.id.menu_update).setOnClickListener(v -> { drawerLayout.closeDrawers(); showUpdateResonixDialog(); });
         findViewById(R.id.menu_bgmode).setOnClickListener(v -> {
             SharedPreferences sp = getSharedPreferences("prefs", MODE_PRIVATE);
-            boolean on = sp.getBoolean("background_mode", false);
-            sp.edit().putBoolean("background_mode", !on).apply();
+            boolean on = !sp.getBoolean("background_mode", false);
+            sp.edit().putBoolean("background_mode", on).apply();
             updateBgModeLabel();
             drawerLayout.closeDrawers();
-            pushOutput("\r\n[后台运行模式 " + (!on ? "已开启" : "已关闭") + "："
-                    + (!on ? "冻结前台操作，避免抢占其他应用（如微信）前台]" : "恢复正常前台行为]") + "\r\n");
+            if (on) {
+                startBackgroundService(true);
+                pushOutput("\r\n[后台运行模式已开启：Linux 环境将在后台持续运行，"
+                        + "可放心用 adb 打开其他应用（如微信）]\r\n");
+            } else {
+                stopBackgroundService();
+                pushOutput("\r\n[后台运行模式已关闭：恢复正常前台行为]\r\n");
+            }
         });
         updateBgModeLabel();
         findViewById(R.id.menu_root).setOnClickListener(v -> { drawerLayout.closeDrawers(); showRootDialog(); });
 
         requestStoragePermission();
+
+        // 后台运行模式恢复：上次开启过（app 被系统回收后重新打开）→ 重新拉起保活服务，
+        // 使进程不被系统回收，proot/reasonix 环境得以在后台继续运行。
+        if (getSharedPreferences("prefs", MODE_PRIVATE).getBoolean("background_mode", false)) {
+            startBackgroundService(false);
+        }
     }
 
     /* ==================== Root 权限（KernelSU/Magisk） ==================== */
@@ -289,6 +316,37 @@ public class MainActivity extends Activity {
         if (tv != null) {
             tv.setText(on ? "后台运行模式：开" : "后台运行模式：关");
             tv.setTextColor(on ? 0xFF4CAF50 : 0xFFFFFFFF);
+        }
+    }
+
+    /**
+     * 启动后台保活前台服务（后台运行模式）。
+     * requestNotifPerm=true（用户手动开启时）：顺带请求通知权限（Android 13+），
+     * 保证常驻通知可见；onCreate 自动恢复时传 false，避免打扰。
+     */
+    private void startBackgroundService(boolean requestNotifPerm) {
+        try {
+            startForegroundService(new Intent(this, BackgroundService.class));
+            Log.d(TAG, "background keep-alive service started");
+        } catch (Exception e) {
+            Log.w(TAG, "start background service failed", e);
+        }
+        if (requestNotifPerm && Build.VERSION.SDK_INT >= 33) {
+            try {
+                requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 201);
+            } catch (Exception e) {
+                Log.w(TAG, "request notification permission failed", e);
+            }
+        }
+    }
+
+    /** 停止后台保活前台服务（后台运行模式关闭） */
+    private void stopBackgroundService() {
+        try {
+            stopService(new Intent(this, BackgroundService.class));
+            Log.d(TAG, "background keep-alive service stopped");
+        } catch (Exception e) {
+            Log.w(TAG, "stop background service failed", e);
         }
     }
 
@@ -515,9 +573,9 @@ public class MainActivity extends Activity {
     /** 向 guest 终端发送命令（用户需已退到 shell；reasonix 会话内无效） */
     private void sendToTerminal(String cmd) {
         try {
-            if (procIn != null) {
-                procIn.write((cmd + "\n").getBytes(StandardCharsets.UTF_8));
-                procIn.flush();
+            if (sProcIn != null) {
+                sProcIn.write((cmd + "\n").getBytes(StandardCharsets.UTF_8));
+                sProcIn.flush();
                 pushOutput("\r\n[已发送 adb 命令到终端]\r\n");
                 Log.d(TAG, "sent to terminal: " + cmd.replace("\n", " ; "));
             } else {
@@ -913,9 +971,10 @@ public class MainActivity extends Activity {
      *  proot 被杀后若不清除会残留成孤儿，导致多套环境并存） */
     private void killProotTree() {
         try {
-            if (prootProcess != null) {
-                prootProcess.destroy();
-                prootProcess = null;
+            if (sProotProcess != null) {
+                sProotProcess.destroy();
+                sProotProcess = null;
+                sProcIn = null;
             }
             // 同 uid 下 kill 同 uid 进程是允许的；按进程名精确匹配，不会误伤其他应用
             Process p = new ProcessBuilder("sh", "-c",
@@ -939,10 +998,10 @@ public class MainActivity extends Activity {
     /** 由 xterm.js 调用：把终端按键输入写入子进程 stdin（经 pty-bridge 转发到 PTY） */
     @JavascriptInterface
     public void write(String data) {
-        if (procIn == null || data == null) return;
+        if (sProcIn == null || data == null) return;
         try {
-            procIn.write(data.getBytes(StandardCharsets.UTF_8));
-            procIn.flush();
+            sProcIn.write(data.getBytes(StandardCharsets.UTF_8));
+            sProcIn.flush();
         } catch (IOException e) {
             Log.w(TAG, "write failed", e);
         }
@@ -968,11 +1027,11 @@ public class MainActivity extends Activity {
      */
     @JavascriptInterface
     public void resize(int rows, int cols) {
-        if (procIn == null || rows <= 0 || cols <= 0) return;
+        if (sProcIn == null || rows <= 0 || cols <= 0) return;
         try {
             String seq = "\u001b]50;" + rows + ";" + cols + "\u0007";
-            procIn.write(seq.getBytes(StandardCharsets.UTF_8));
-            procIn.flush();
+            sProcIn.write(seq.getBytes(StandardCharsets.UTF_8));
+            sProcIn.flush();
         } catch (IOException e) {
             Log.w(TAG, "resize failed", e);
         }
@@ -1223,8 +1282,9 @@ public class MainActivity extends Activity {
 
     /** 启动 proot（从 nativeLibraryDir 执行）-> Alpine -> pty-bridge(PTY) -> entry.sh -> reasonix */
     private void startProot(File files, File rootfs) throws IOException {
-        // 防重复启动：环境已在运行时直接跳过（onCreate 已 kill 旧环境，此为双保险）
-        if (prootProcess != null && prootProcess.isAlive()) {
+        // 防重复启动：环境已在运行时直接跳过（onCreate 已 kill 旧环境，此为双保险；
+        // 后台运行模式复用场景 environmentStarted=true 已挡在启动前）
+        if (sProotProcess != null && sProotProcess.isAlive()) {
             Log.d(TAG, "proot already running, skip start");
             return;
         }
@@ -1266,12 +1326,14 @@ public class MainActivity extends Activity {
         pb.environment().put("PROOT_LOADER", nativeLibDir + "/loader.so");
         pb.environment().put("TMPDIR", nativeLibDir);
         pb.environment().put("PROOT_TMP_DIR", files.getAbsolutePath());
-        prootProcess = pb.start();
-        procIn = prootProcess.getOutputStream();
+        sProotProcess = pb.start();
+        sProcIn = sProotProcess.getOutputStream();
         startRootPolling();   // 启动 root 命令桥轮询（guest root <cmd> → app su 执行）
 
+        // reader 绑定启动时刻的进程（局部捕获），避免重启环境后读到新进程的流
+        final Process p = sProotProcess;
         Thread reader = new Thread(() -> {
-            try (InputStream in = prootProcess.getInputStream()) {
+            try (InputStream in = p.getInputStream()) {
                 byte[] buf = new byte[8192];
                 int n;
                 while ((n = in.read(buf)) > 0) {
@@ -1280,7 +1342,10 @@ public class MainActivity extends Activity {
             } catch (IOException e) {
                 Log.w(TAG, "reader ended", e);
             }
-            pushOutput("\r\n[Linux 环境已退出]\r\n");
+            // 环境被主动替换/重启（killProotTree → 新进程）时不输出误导性退出消息
+            if (sProotProcess == p) {
+                pushOutput("\r\n[Linux 环境已退出]\r\n");
+            }
         }, "proot-reader");
         reader.setDaemon(true);
         reader.start();
@@ -1324,12 +1389,17 @@ public class MainActivity extends Activity {
         }
     }
 
-    /** 把文本追加到 xterm.js 终端（任意线程可调）；同时输出到 logcat 便于调试 */
+    /** 把文本追加到 xterm.js 终端（任意线程可调）；同时输出到 logcat 便于调试。
+     *  输出转发到当前活动实例 sCurrent：后台 reader 线程在 Activity 重建后
+     *  仍能把环境输出送到新实例的终端；无活动实例时直接丢弃（避免旧实例被
+     *  daemon reader 长期持有无法 GC）。 */
     private void pushOutput(String text) {
         Log.d(TAG, "OUT> " + (text.length() > 200 ? text.substring(0, 200) : text));
-        ui.post(() -> {
-            if (webView == null) return;
-            webView.evaluateJavascript("window.onTermData(" + jsQuote(text) + ")", null);
+        final MainActivity target = sCurrent;
+        if (target == null) return;
+        target.ui.post(() -> {
+            if (target.webView == null) return;
+            target.webView.evaluateJavascript("window.onTermData(" + jsQuote(text) + ")", null);
         });
     }
 
@@ -1360,10 +1430,17 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        if (sCurrent == this) sCurrent = null;
         stopRootPolling();
-        if (prootProcess != null) {
-            prootProcess.destroy();     // pty-bridge 收到 SIGTERM 后会 kill 整个 guest 进程组
-            prootProcess = null;
+        // 后台运行模式：环境与 Activity 生命周期解耦，退出 Activity 不杀 proot
+        // （由前台服务保活继续后台运行，重新打开时 onCreate 复用环境与终端 I/O）；
+        // 关闭模式时照旧清理。
+        boolean bgMode = getSharedPreferences("prefs", MODE_PRIVATE)
+                .getBoolean("background_mode", false);
+        if (!bgMode && sProotProcess != null) {
+            sProotProcess.destroy();     // pty-bridge 收到 SIGTERM 后会 kill 整个 guest 进程组
+            sProotProcess = null;
+            sProcIn = null;
         }
         if (webView != null) {
             webView.destroy();
