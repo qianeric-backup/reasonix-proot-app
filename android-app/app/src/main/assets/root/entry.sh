@@ -261,7 +261,30 @@ rm -f /root/.reasonix/projects/*/sessions/*.recovery.json \
       /root/.reasonix/projects/*/sessions/*.recovery \
       /root/.reasonix/projects/*/sessions/*.lease.* 2>/dev/null
 
-# 直接进入 reasonix 交互会话；退出后落到 shell
+# reasonix 启动包装：保证每次启动（含退出后再次运行、更新后重启）都全新进入 TUI（alt screen）。
+# 将真实二进制改名为 reasonix.bin，用 wrapper 替代 reasonix——无论 entry.sh 首次启动
+# 还是用户在 shell 里再次输入 reasonix，都会先清理会话恢复标记再启动。
+# 幂等/更新安全：reasonix 更新会覆盖 wrapper 位置（写入新二进制），entry.sh 检测到
+# reasonix 不是 wrapper（首行无标记）时，把新二进制备份为 reasonix.bin 并重建 wrapper；
+# restartEnvironment 必走 entry.sh，因此更新后自动重新包装。
+if [ -x /usr/local/bin/reasonix ]; then
+    # 检测 reasonix 是否已是 wrapper（ASCII 标记 rx-wrap；不用 head -1 + 中文，busybox grep 不可靠）
+    if ! grep -q "rx-wrap" /usr/local/bin/reasonix 2>/dev/null; then
+        mv -f /usr/local/bin/reasonix /usr/local/bin/reasonix.bin 2>/dev/null
+        cat > /usr/local/bin/reasonix <<'SH'
+#!/bin/sh
+# reasonix wrapper: rx-wrap —— 每次启动前清理会话恢复标记，保证全新进入 TUI（alt screen）
+rm -f /root/.reasonix/projects/*/sessions/*.recovery.json \
+      /root/.reasonix/projects/*/sessions/*.recovery \
+      /root/.reasonix/projects/*/sessions/*.lease.* 2>/dev/null
+exec /usr/local/bin/reasonix.bin "$@"
+SH
+        chmod 755 /usr/local/bin/reasonix
+        echo "[reasonix] 已创建启动包装（清理恢复标记，每次全新进入 TUI）"
+    fi
+fi
+
+# 直接进入 reasonix 交互会话；退出后落到 shell（reasonix 为包装命令，再次运行同样清理）
 if command -v reasonix >/dev/null 2>&1; then
   reasonix
   echo ""
