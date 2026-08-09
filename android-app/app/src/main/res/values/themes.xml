@@ -1,21 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- 全局纯黑主题 -->
+    <!-- 全局主题：平台原生 Material 深色风格（零依赖），保持纯黑背景。
+         原生 Theme.Material 自带 Material 控件样式（波纹/下划线/圆角），
+         此处仅覆盖为纯黑底色 + 绿色点缀，最接近安卓原生观感。 -->
     <style name="AppTheme" parent="android:style/Theme.Material.NoActionBar.Fullscreen">
+        <!-- 纯黑背景 -->
         <item name="android:windowBackground">#000000</item>
         <item name="android:colorBackground">#000000</item>
-        <item name="android:alertDialogTheme">@style/DarkDialog</item>
         <item name="android:statusBarColor">#000000</item>
         <item name="android:navigationBarColor">#000000</item>
-    </style>
-
-    <!-- 深色对话框 -->
-    <style name="DarkDialog" parent="android:style/Theme.Material.Dialog.NoActionBar">
-        <item name="android:windowBackground">#161616</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <!-- 原生控件配色：黑灰底 + 绿色点缀（终端风格延续） -->
+        <item name="android:colorPrimary">#262626</item>
+        <item name="android:colorPrimaryDark">#000000</item>
         <item name="android:colorAccent">#4CAF50</item>
+        <item name="android:colorButtonNormal">#262626</item>
+        <item name="android:colorControlNormal">#555555</item>
+        <item name="android:colorControlActivated">#4CAF50</item>
+        <item name="android:colorControlHighlight">#33FFFFFF</item>
         <item name="android:textColorPrimary">#FFFFFF</item>
         <item name="android:textColorSecondary">#CCCCCC</item>
-        <item name="android:colorControlNormal">#FFFFFF</item>
-        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:textColorHint">#707070</item>
     </style>
 </resources>

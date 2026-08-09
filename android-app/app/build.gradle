@@ -41,7 +41,8 @@ android {
 }
 
 dependencies {
-    // DrawerLayout 自带传递依赖 androidx.core（1.2.0），足够满足 GravityCompat 使用，
-    // 无需显式引入大体积的 core 1.13.1（会带入 lifecycle/concurrent 等大量多余代码）。
+    // DrawerLayout（侧滑菜单）
     implementation 'androidx.drawerlayout:drawerlayout:1.2.0'
+    // 不引入 Material Components 库（体积大）：使用平台原生 android:Theme.Material
+    // 主题 + 原生控件，即可获得安卓原生 Material 风格，保持应用轻量化。
 }

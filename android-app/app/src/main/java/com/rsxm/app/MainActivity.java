@@ -2,7 +2,6 @@ package com.rsxm.app;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Intent;
@@ -19,7 +18,8 @@ import android.os.Handler;
 import android.os.Looper;
 import android.text.InputType;
 import android.util.Log;
-import android.view.inputmethod.EditorInfo;
+import android.view.View;
+import android.view.ViewGroup;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -161,6 +161,9 @@ public class MainActivity extends Activity {
         updateBgModeLabel();
         findViewById(R.id.menu_root).setOnClickListener(v -> { drawerLayout.closeDrawers(); showRootDialog(); });
 
+        // 全屏功能面板：返回按钮关闭（系统返回键同样生效）
+        findViewById(R.id.panel_back).setOnClickListener(v -> hidePanel());
+
         requestStoragePermission();
 
         // 后台运行模式恢复：上次开启过（app 被系统回收后重新打开）→ 重新拉起保活服务，
@@ -242,11 +245,8 @@ public class MainActivity extends Activity {
         TextView result = createDarkResult();
         result.setText("（测试结果将显示在这里）");
         panel.addView(result);
-        new AlertDialog.Builder(this)
-                .setTitle("Root 权限")
-                .setView(panel)
-                .setPositiveButton("关闭", null)
-                .show();
+        // 全屏面板展示（取代系统弹窗，避免遮挡控件）
+        showPanel("Root 权限", panel, null);
         // 检测状态（后台线程）
         new Thread(() -> {
             final String st;
@@ -310,6 +310,43 @@ public class MainActivity extends Activity {
     }
 
     /* ==================== 侧滑菜单功能 ==================== */
+
+    // ------------------------------------------------------------------
+    // 全屏功能面板（取代系统 AlertDialog 弹窗，页面式切换避免遮挡控件）
+    // ------------------------------------------------------------------
+    private Runnable panelOnClose;   // 面板关闭回调（hidePanel 时触发一次）
+
+    /** 显示全屏功能面板：标题 + 内容视图；onClose 在面板关闭时回调（可空） */
+    private void showPanel(String title, View content, Runnable onClose) {
+        ((TextView) findViewById(R.id.panel_title)).setText(title);
+        LinearLayout holder = findViewById(R.id.panel_content);
+        holder.removeAllViews();
+        holder.addView(content, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        panelOnClose = onClose;
+        findViewById(R.id.panel_overlay).setVisibility(View.VISIBLE);
+    }
+
+    /** 关闭全屏功能面板 */
+    private void hidePanel() {
+        if (findViewById(R.id.panel_overlay).getVisibility() != View.VISIBLE) return;
+        findViewById(R.id.panel_overlay).setVisibility(View.GONE);
+        ((ViewGroup) findViewById(R.id.panel_content)).removeAllViews();
+        Runnable cb = panelOnClose;
+        panelOnClose = null;
+        if (cb != null) cb.run();
+    }
+
+    /** 返回键：面板可见时先关面板，不退出应用 */
+    @Override
+    public void onBackPressed() {
+        if (findViewById(R.id.panel_overlay).getVisibility() == View.VISIBLE) {
+            hidePanel();
+            return;
+        }
+        super.onBackPressed();
+    }
+
     private void updateBgModeLabel() {
         boolean on = getSharedPreferences("prefs", MODE_PRIVATE).getBoolean("background_mode", false);
         TextView tv = findViewById(R.id.menu_bgmode);
@@ -357,7 +394,7 @@ public class MainActivity extends Activity {
         return (int) (v * getResources().getDisplayMetrics().density + 0.5f);
     }
 
-    /** 深色输入框（纯黑观感统一） */
+    /** 深色输入框（原生 Material 下划线风格，背景透明保持纯黑） */
     private EditText createDarkEditText(String hint, int inputType) {
         EditText et = new EditText(this);
         et.setSingleLine(true);
@@ -365,19 +402,19 @@ public class MainActivity extends Activity {
         et.setHint(hint);
         et.setTextColor(0xFFFFFFFF);
         et.setHintTextColor(0xFF707070);
-        et.setBackgroundColor(0xFF1A1A1A);
         et.setPadding(dp(14), dp(10), dp(14), dp(10));
         return et;
     }
 
-    /** 深色按钮 */
+    /** 原生风格按钮（平台 Theme.Material 下自带圆角/波纹，仅覆 tint 为黑灰保持纯黑） */
     private Button createDarkButton(String text) {
         Button b = new Button(this);
         b.setText(text);
         b.setTextColor(0xFFFFFFFF);
         b.setTextSize(14);
-        b.setBackgroundColor(0xFF262626);
         b.setAllCaps(false);
+        // 原生涟漪保留（colorControlHighlight），底色改为黑灰
+        b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF262626));
         return b;
     }
 
@@ -459,22 +496,23 @@ public class MainActivity extends Activity {
             runAdbInGuest("adb-dopair " + pp + " " + pc, resultView, statusLine);
         });
         panel.addView(pairBtn);
-        new AlertDialog.Builder(this)
-                .setTitle("ADB 无线调试")
-                .setView(panel)
-                .setNeutralButton("复制命令", (d, w) -> {
-                    saveAdbPrefs(prefs, pairPort, pairCode);
-                    String cmd = buildAdbCommands(fip,
-                            pairPort.getText().toString().trim(),
-                            pairCode.getText().toString().trim());
-                    try {
-                        ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-                        cm.setPrimaryClip(ClipData.newPlainText("adb", cmd));
-                    } catch (Exception e) {
-                        Log.w(TAG, "clipboard failed", e);
-                    }
-                })
-                .show();
+        // 复制命令按钮（原对话框 neutral 按钮 → 面板内按钮）
+        Button copyBtn = createDarkButton("复制命令");
+        copyBtn.setOnClickListener(v -> {
+            saveAdbPrefs(prefs, pairPort, pairCode);
+            String cmd = buildAdbCommands(fip,
+                    pairPort.getText().toString().trim(),
+                    pairCode.getText().toString().trim());
+            try {
+                ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                cm.setPrimaryClip(ClipData.newPlainText("adb", cmd));
+            } catch (Exception e) {
+                Log.w(TAG, "clipboard failed", e);
+            }
+        });
+        panel.addView(copyBtn);
+        // 全屏面板展示（取代系统弹窗，避免遮挡控件）
+        showPanel("ADB 无线调试", panel, null);
         // 操作逻辑优化：状态未知（首次/环境刚启动）时自动触发一次检测，免去手动点击
         if (status.contains("未知")) {
             statusLine.postDelayed(() -> runAdbInGuest("adb-autoconnect", resultView, statusLine), 600);
@@ -623,26 +661,30 @@ public class MainActivity extends Activity {
         EditText input = createDarkEditText("粘贴 DeepSeek API Key",
                 InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         if (!current.isEmpty()) input.setText(current);
-        new AlertDialog.Builder(this)
-                .setTitle("API Key 配置")
-                .setMessage("当前模型：deepseek-v4-flash（api.deepseek.com）")
-                .setView(input)
-                .setPositiveButton("保存", (d, w) -> {
-                    String key = input.getText().toString().trim();
-                    if (key.isEmpty()) return;
-                    try {
-                        env.getParentFile().mkdirs();
-                        java.nio.file.Files.write(env.toPath(),
-                                ("DEEPSEEK_API_KEY=" + key + "\n").getBytes(StandardCharsets.UTF_8));
-                        Log.d(TAG, "API key updated");
-                        pushOutput("\r\n[API Key 已更新，正在重启环境...]\r\n");
-                        restartEnvironment();
-                    } catch (Exception e) {
-                        Log.e(TAG, "save api key failed", e);
-                    }
-                })
-                .setNegativeButton("取消", null)
-                .show();
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(16), dp(8), dp(16), 0);
+        panel.addView(createDarkTip("当前模型：deepseek-v4-flash（api.deepseek.com）"));
+        panel.addView(input);
+        Button saveBtn = createDarkButton("保存");
+        saveBtn.setOnClickListener(v -> {
+            String key = input.getText().toString().trim();
+            if (key.isEmpty()) return;
+            try {
+                env.getParentFile().mkdirs();
+                java.nio.file.Files.write(env.toPath(),
+                        ("DEEPSEEK_API_KEY=" + key + "\n").getBytes(StandardCharsets.UTF_8));
+                Log.d(TAG, "API key updated");
+                hidePanel();
+                pushOutput("\r\n[API Key 已更新，正在重启环境...]\r\n");
+                restartEnvironment();
+            } catch (Exception e) {
+                Log.e(TAG, "save api key failed", e);
+            }
+        });
+        panel.addView(saveBtn);
+        // 全屏面板展示（取代系统弹窗，避免遮挡控件）
+        showPanel("API Key 配置", panel, null);
     }
 
     /** 从 Go 二进制提取模块版本（buildinfo：`mod\t...\tvX.Y.Z`，位于文件尾部） */
@@ -723,25 +765,35 @@ public class MainActivity extends Activity {
                 + "或从手机选择新版文件 / 恢复内置版本。");
         panel.addView(tip);
         panel.addView(urlInput);
-        new AlertDialog.Builder(this)
-                .setTitle("更新 reasonix")
-                .setView(panel)
-                .setPositiveButton("网络更新", (d, w) -> {
-                    String url = urlInput.getText().toString().trim();
-                    if (!url.isEmpty()) updateFromNetwork(url);
-                })
-                .setNeutralButton("选择文件", (d, w) -> {
-                    try {
-                        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-                        i.addCategory(Intent.CATEGORY_OPENABLE);
-                        i.setType("*/*");
-                        startActivityForResult(i, REQ_UPDATE_RESONIX);
-                    } catch (Exception e) {
-                        Log.e(TAG, "open document failed", e);
-                    }
-                })
-                .setNegativeButton("恢复内置", (d, w) -> restoreBundledResonix())
-                .show();
+        Button netBtn = createDarkButton("网络更新");
+        netBtn.setOnClickListener(v -> {
+            String url = urlInput.getText().toString().trim();
+            if (!url.isEmpty()) {
+                hidePanel();
+                updateFromNetwork(url);
+            }
+        });
+        panel.addView(netBtn);
+        Button fileBtn = createDarkButton("选择文件");
+        fileBtn.setOnClickListener(v -> {
+            try {
+                Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                i.addCategory(Intent.CATEGORY_OPENABLE);
+                i.setType("*/*");
+                startActivityForResult(i, REQ_UPDATE_RESONIX);
+            } catch (Exception e) {
+                Log.e(TAG, "open document failed", e);
+            }
+        });
+        panel.addView(fileBtn);
+        Button restoreBtn = createDarkButton("恢复内置");
+        restoreBtn.setOnClickListener(v -> {
+            hidePanel();
+            restoreBundledResonix();
+        });
+        panel.addView(restoreBtn);
+        // 全屏面板展示（取代系统弹窗，避免遮挡控件）
+        showPanel("更新 reasonix", panel, null);
     }
 
     /** 从网络下载 reasonix 更新包（tar.gz），解压提取二进制并覆盖 guest 内版本 */
@@ -931,12 +983,22 @@ public class MainActivity extends Activity {
                 restartEnvironment();
             } else if (!managed && !prefs.getBoolean("storage_guided", false)) {
                 prefs.edit().putBoolean("storage_guided", true).apply();
-                new AlertDialog.Builder(this)
-                        .setTitle("存储权限")
-                        .setMessage("reasonix 需要\"所有文件访问\"权限才能读写手机存储的任意位置（文档、下载、非媒体文件等）。\n\n未授权时仅可访问公共媒体目录。")
-                        .setPositiveButton("去授权", (d, w) -> openManageAllFilesSettings())
-                        .setNegativeButton("暂不", null)
-                        .show();
+                // 全屏面板引导（取代系统弹窗，避免遮挡控件）
+                LinearLayout panel = new LinearLayout(this);
+                panel.setOrientation(LinearLayout.VERTICAL);
+                panel.setPadding(dp(16), dp(8), dp(16), 0);
+                panel.addView(createDarkTip("reasonix 需要\"所有文件访问\"权限才能读写手机存储的任意位置"
+                        + "（文档、下载、非媒体文件等）。\n\n未授权时仅可访问公共媒体目录。"));
+                Button grantBtn = createDarkButton("去授权");
+                grantBtn.setOnClickListener(v -> {
+                    hidePanel();
+                    openManageAllFilesSettings();
+                });
+                panel.addView(grantBtn);
+                Button laterBtn = createDarkButton("暂不");
+                laterBtn.setOnClickListener(v -> hidePanel());
+                panel.addView(laterBtn);
+                showPanel("存储权限", panel, null);
             }
         }
     }
@@ -1141,27 +1203,33 @@ public class MainActivity extends Activity {
     }
 
     private void showApiKeyDialog(final File rootfs, final File home, final File cfg, final File env) {
-        final EditText input = new EditText(this);
-        input.setHint("sk-...（DeepSeek API Key）");
-        input.setSingleLine(true);
-        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        input.setImeOptions(EditorInfo.IME_ACTION_DONE);
-
-        new AlertDialog.Builder(this)
-                .setTitle("配置 Reasonix API Key")
-                .setMessage("首次使用需要 DeepSeek API Key（platform.deepseek.com 获取）。\n保存后自动进入 reasonix；也可稍后在终端运行 reasonix setup 修改。")
-                .setView(input)
-                .setPositiveButton("保存并启动", (d, w) -> {
-                    String key = input.getText().toString().trim();
-                    if (!key.isEmpty()) {
-                        writeReasonixConfig(home, cfg, env, key);
-                    } else {
-                        Log.w(TAG, "empty API key, starting without config");
-                    }
-                })
-                .setNegativeButton("跳过", (d, w) -> Log.d(TAG, "skipped API key dialog"))
-                .setOnDismissListener(d -> safeStartProot())
-                .show();
+        final EditText input = createDarkEditText("sk-...（DeepSeek API Key）",
+                InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(16), dp(8), dp(16), 0);
+        panel.addView(createDarkTip("首次使用需要 DeepSeek API Key（platform.deepseek.com 获取）。\n"
+                + "保存后自动进入 reasonix；也可稍后在终端运行 reasonix setup 修改。"));
+        panel.addView(input);
+        Button saveBtn = createDarkButton("保存并启动");
+        saveBtn.setOnClickListener(v -> {
+            String key = input.getText().toString().trim();
+            if (!key.isEmpty()) {
+                writeReasonixConfig(home, cfg, env, key);
+            } else {
+                Log.w(TAG, "empty API key, starting without config");
+            }
+            hidePanel();   // onClose 回调 → safeStartProot
+        });
+        panel.addView(saveBtn);
+        Button skipBtn = createDarkButton("跳过");
+        skipBtn.setOnClickListener(v -> {
+            Log.d(TAG, "skipped API key dialog");
+            hidePanel();   // onClose 回调 → safeStartProot
+        });
+        panel.addView(skipBtn);
+        // 全屏面板展示；无论保存/跳过/返回关闭，环境照常启动（保持原 onDismiss 语义）
+        showPanel("配置 Reasonix API Key", panel, this::safeStartProot);
     }
 
     /** 写入 reasonix 配置（config.toml + .env，DeepSeek provider）；文件很小，同步执行 */
