@@ -551,6 +551,7 @@ public class MainActivity extends Activity {
                     if (s.equals("offline")) return "设备离线（offline）";
                     if (s.equals("need_pair")) return "需配对：无线调试已开启但未信任本设备（填写配对端口+配对码配对）";
                     if (s.equals("no_port")) return "未发现无线调试端口（请确认已开启）";
+                    if (s.equals("no_adb")) return "adb 未就绪（android-tools 后台安装中，请稍后重试）";
                     if (s.equals("no_ip")) return "未获取本机 IP（请连接 Wi-Fi）";
                     return s;
                 }

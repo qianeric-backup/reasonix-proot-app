@@ -73,20 +73,20 @@ fi
 # --- ADB 无线调试持久化（adb-无线调试持久化总结.md v2）---
 # 1) 预置 adb 日志路径：否则首次 adb 必然崩溃且无报错输出
 export ANDROID_ADB_LOG_PATH=/tmp/adb.log
-if command -v adb >/dev/null 2>&1; then
-    mkdir -p ~/.android
-    # 6) 密钥完整性校验：adbkey 丢失会退回"每次都要配对"，缺失则重新生成。
-    #    adbkey 持久化于 /root/.android（rootfs 持久），密钥不变 → 免配对直连。
-    if [ ! -f ~/.android/adbkey ]; then
-        adb keygen ~/.android/adbkey >/dev/null 2>&1 || true
-        echo "[adb] 已生成 adbkey（持久化于 /root/.android）"
-    fi
+# adb-autoconnect / adb-dopair 无条件创建：android-tools 可能在后台安装中，
+# 启动瞬间 command -v adb 判断会漏建脚本（修复"更新后 adb 功能失效"），
+# 脚本内部自行检查 adb 可用性；密钥生成与自动重连在下方等待 adb 就绪后执行。
     # 3) 端口自动发现工具：扫描 30000-49999 找无线调试连接端口（mDNS 在容器不可用）
     cat > /usr/local/bin/adb-autoconnect <<'SH'
 #!/bin/sh
 # 自动发现无线调试端口并连接（adb-无线调试持久化总结.md）
 # 结果写入 /root/.adb_status 供 Android 侧对话框显示
 status() { echo "$1" > /root/.adb_status; }
+if ! command -v adb >/dev/null 2>&1; then
+    status "no_adb"
+    echo "adb 尚未就绪（android-tools 后台安装中），请稍后重试"
+    exit 1
+fi
 adb_state() {
     if adb devices 2>/dev/null | awk 'NR>1 && $2=="device" {f=1} END{exit !f}'; then
         echo "device"
@@ -146,6 +146,11 @@ SH
     cat > /usr/local/bin/adb-dopair <<'SH'
 #!/bin/sh
 # 配对并自动连接无线调试（由 Android 侧 app 调用）
+if ! command -v adb >/dev/null 2>&1; then
+    echo "adb 尚未就绪（android-tools 后台安装中），请稍后重试"
+    echo "no_adb" > /root/.adb_status
+    exit 1
+fi
 HOST_IP=$(cat /root/.adb_ip 2>/dev/null)
 [ -n "$HOST_IP" ] || { echo "无 /root/.adb_ip（请重开应用）"; exit 1; }
 PP=${1:-}; PC=${2:-}
@@ -181,9 +186,26 @@ echo "need_pair" > /root/.adb_status
 echo "配对完成但连接未就绪（可能是配对码/端口已过期，请重新配对）"
 SH
     chmod 755 /usr/local/bin/adb-dopair
-    # 5) 启动即自动重连：后台静默执行（不阻塞 reasonix 启动）
-    ( sleep 4; adb-autoconnect >/tmp/adb-auto.log 2>&1 || true ) &
-fi
+# 5) 等待 adb 就绪（后台安装可能未完成）后：生成持久化密钥 + 自动重连，
+#    不阻塞 reasonix 启动；adb 120 秒内未就绪则放弃本次自动重连。
+(
+    i=0
+    while ! command -v adb >/dev/null 2>&1 && [ "$i" -lt 60 ]; do
+        sleep 2
+        i=$((i+1))
+    done
+    if command -v adb >/dev/null 2>&1; then
+        mkdir -p ~/.android
+        # 6) 密钥完整性校验：adbkey 丢失会退回"每次都要配对"，缺失则重新生成。
+        #    adbkey 持久化于 /root/.android（rootfs 持久），密钥不变 → 免配对直连。
+        if [ ! -f ~/.android/adbkey ]; then
+            adb keygen ~/.android/adbkey >/dev/null 2>&1 || true
+            echo "[adb] 已生成 adbkey（持久化于 /root/.android）"
+        fi
+        sleep 4
+        adb-autoconnect >/tmp/adb-auto.log 2>&1 || true
+    fi
+) &
 
 # root 命令桥：app 侧以 su 执行本机 root 命令（KernelSU/Magisk）。
 # AI/用户在 reasonix 里直接 `root <命令>` 即可获取手机 root 权限。
