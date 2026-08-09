@@ -254,6 +254,12 @@ chmod 755 /usr/local/bin/root
 # 关闭 reasonix 遥测确认提示（REASONIX_TELEMETRY=0 / DO_NOT_TRACK 等效）
 export REASONIX_TELEMETRY=0
 
+# 每次启动全新进入 TUI（alt screen）：清理 reasonix 非正常退出（force-stop/杀进程）
+# 留下的会话恢复标记（*.recovery.json / *.lease.*）。若不清除，reasonix 会恢复
+# 上次会话并渲染历史到普通屏（不进 alt screen），导致终端滑动查看失效。
+rm -f /root/.reasonix/projects/*/sessions/*.recovery.json \
+      /root/.reasonix/projects/*/sessions/*.lease.* 2>/dev/null
+
 # 直接进入 reasonix 交互会话；退出后落到 shell
 if command -v reasonix >/dev/null 2>&1; then
   reasonix
