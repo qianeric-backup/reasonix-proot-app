@@ -110,14 +110,16 @@
     touchMoved = true;
     var inAlt = term.buffer.active.type === 'alternate';
     if (inAlt && window.Android && window.Android.write) {
-      // TUI（alt screen）无 scrollback：reasonix 开启了 SGR 鼠标追踪，
-      // 把滑动模拟成鼠标滚轮事件，由 reasonix 自己滚动历史输出。
+      // TUI（alt screen）：reasonix 的 transcript 滚动使用 PageUp/PageDown 键
+      // （reasonix 帮助文本明示 `PageUp/PageDown | 滚动 transcript`，bubbles
+      // viewport 支持；SGR 滚轮事件 reasonix 不响应）。
+      // 把滑动模拟为翻页键：向下滑=查看历史=PageUp(ESC[5~)，向上滑=PageDown(ESC[6~)。
       var step = 8;
       var acc = dy;
       while (Math.abs(acc) >= step) {
-        var dir = acc > 0 ? 64 : 65;   // SGR: 64=wheel up, 65=wheel down
+        var key = acc > 0 ? '\u001b[5~' : '\u001b[6~';
         acc -= (acc > 0 ? 1 : -1) * step;
-        try { Android.write('\u001b[<' + dir + ';20;20M'); } catch (err) {}
+        try { Android.write(key); } catch (err) {}
       }
       if (!wheelSent) {
         wheelSent = true;
