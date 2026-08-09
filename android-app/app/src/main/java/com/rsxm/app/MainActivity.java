@@ -73,6 +73,8 @@ public class MainActivity extends Activity {
     private static volatile MainActivity sCurrent;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private volatile boolean environmentStarted = false;
+    /** 复用环境标记：后台模式开启时 Activity 重建复用运行中的 proot 环境 */
+    private volatile boolean reuseEnv = false;
     private DrawerLayout drawerLayout;
     private TextView tvStatus;
 
@@ -91,6 +93,7 @@ public class MainActivity extends Activity {
                 .getBoolean("background_mode", false);
         if (bgMode && sProotProcess != null && sProotProcess.isAlive()) {
             environmentStarted = true;
+            reuseEnv = true;      // 复用环境：新 WebView 空白，需强制 reasonix 重绘 TUI
             startRootPolling();   // 复用环境：恢复 root 命令桥轮询（onDestroy 已停）
             Log.d(TAG, "background mode: reusing running proot environment");
         } else {
@@ -115,6 +118,18 @@ public class MainActivity extends Activity {
             public void onPageFinished(WebView view, String url) {
                 // 聚焦 WebView 触发 xterm 渲染，避免启动后需点击才显示 CLI 界面
                 try { view.requestFocus(); } catch (Exception ignored) {}
+                if (reuseEnv) {
+                    // 复用环境（后台模式开启 + Activity 重建）：新 WebView 终端空白，
+                    // reasonix 不感知新终端，强制重绘完整 TUI（微调列数触发 SIGWINCH 再恢复）
+                    reuseEnv = false;
+                    view.postDelayed(() -> {
+                        try {
+                            view.evaluateJavascript(
+                                    "if(window.Android&&Android.resize){Android.resize(term.rows,Math.max(1,term.cols-1));"
+                                            + "setTimeout(function(){Android.resize(term.rows,term.cols);},200);}", null);
+                        } catch (Exception ignored) {}
+                    }, 600);
+                }
                 if (!environmentStarted) {
                     environmentStarted = true;
                     new Thread(MainActivity.this::startEnvironment).start();
