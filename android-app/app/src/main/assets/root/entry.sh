@@ -233,6 +233,23 @@ fi
 SH
 chmod 755 /usr/local/bin/root
 
+    # adb wrapper：root 可用（/root/.root-ok 标记，app 预检授权后写入）时，
+    # `adb shell <命令>` 直接经 root 命令桥（app 侧 su 执行）——无需无线调试连接
+    # 即可控制手机（打开应用/执行命令）；其余 adb 命令（devices/connect/pair 等）转真实 adb。
+    if [ -x /usr/bin/adb ] && [ ! -f /usr/local/bin/adb ]; then
+        cat > /usr/local/bin/adb <<'SH'
+#!/bin/sh
+# adb wrapper: rx-adb —— root 可用时 adb shell 走 root 命令桥（无需无线调试）
+if [ "$1" = "shell" ] && [ -n "$2" ] && [ -f /root/.root-ok ]; then
+    shift
+    exec /usr/local/bin/root "$@"
+fi
+exec /usr/bin/adb "$@"
+SH
+        chmod 755 /usr/local/bin/adb
+        echo "[adb] 已启用 root 直连模式：adb shell 经 root 桥执行（无需无线调试）"
+    fi
+
     # ADB 独立执行服务：app 侧把命令写入 /root/.adb-cmd，此循环执行并把
     # 结果写入 /root/.adb-out（末尾追加 __DONE__ 标记）。使 ADB 无线调试
     # 直接由 app 驱动，不依赖 reasonix（AI）会话。
@@ -243,6 +260,7 @@ chmod 755 /usr/local/bin/root
                 CMD=$(cat /root/.adb-cmd)
                 rm -f /root/.adb-cmd
                 {
+                    hash -r 2>/dev/null   # 清命令缓存：确保 adb 解析到 /usr/local/bin wrapper（root 直连）
                     eval "$CMD"
                 } > /root/.adb-out 2>&1
                 echo "__DONE__" >> /root/.adb-out

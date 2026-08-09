@@ -188,6 +188,7 @@ public class MainActivity extends Activity {
     private void startRootPolling() {
         Log.d(TAG, "root polling started");
         rootPoller.removeCallbacks(rootPollTask);
+        probeRootAndMark();   // 预检 root 并写 .root-ok（guest adb wrapper 据此直连 root 桥）
         rootPoller.postDelayed(rootPollTask, 1500);
     }
 
@@ -275,18 +276,64 @@ public class MainActivity extends Activity {
         });
     }
 
-    /** 探测 su 路径 */
+    /** 探测 su 路径（含 KernelSU/Magisk；找不到则回退 PATH 中的 su） */
     private String findSuPath() {
         String[] paths = {
                 "/system/bin/su", "/system/xbin/su", "/sbin/su", "/vendor/bin/su",
-                "/system/bin/.ext/.su", "/system/usr/we-need-root/su-backup"
+                "/system/bin/.ext/.su", "/system/usr/we-need-root/su-backup",
+                "/debug_ramdisk/su",              // KernelSU
+                "/data/adb/ksu/bin/su",           // KernelSU
+                "/data/adb/magisk/busybox/su"     // Magisk
         };
         for (String p : paths) {
             boolean ex = new File(p).exists();
-            Log.d(TAG, "root probe: " + p + " exists=" + ex + " canRead=" + new File(p).canRead());
+            Log.d(TAG, "root probe: " + p + " exists=" + ex);
             if (ex) return p;
         }
+        // 回退：直接使用 "su"（走 PATH，KernelSU/Magisk 通常已加入 PATH）
+        try {
+            Process p = new ProcessBuilder("su", "-c", "id").redirectErrorStream(true).start();
+            if (p.waitFor(3, TimeUnit.SECONDS)) {
+                byte[] buf = new byte[256];
+                int n = p.getInputStream().read(buf);
+                String s = n > 0 ? new String(buf, 0, n, StandardCharsets.UTF_8) : "";
+                p.destroy();
+                if (s.contains("uid=0")) {
+                    Log.d(TAG, "root probe: PATH su works: " + s.trim());
+                    return "su";
+                }
+            } else {
+                p.destroy();
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "root probe: PATH su failed", e);
+        }
         return null;
+    }
+
+    /** 预检 root 并写 /root/.root-ok 标记（guest 侧 adb wrapper 据此直连 root 命令桥，无需无线调试） */
+    private void probeRootAndMark() {
+        new Thread(() -> {
+            String su = findSuPath();
+            boolean ok = su != null;
+            if (ok) {
+                String r = execRootCommand("id", 5);
+                ok = r != null && r.contains("uid=0");
+            }
+            try {
+                File rootDir = new File(new File(getFilesDir(), "rootfs"), "root");
+                File okFile = new File(rootDir, ".root-ok");
+                if (ok) {
+                    java.nio.file.Files.write(okFile.toPath(), "ok\n".getBytes(StandardCharsets.UTF_8));
+                    Log.d(TAG, "root precheck OK, wrote .root-ok");
+                } else {
+                    okFile.delete();
+                    Log.d(TAG, "root precheck unavailable, removed .root-ok");
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "root mark failed", e);
+            }
+        }, "root-precheck").start();
     }
 
     /** 执行 root 命令（su -c），返回 stdout+stderr（失败返回 null） */
