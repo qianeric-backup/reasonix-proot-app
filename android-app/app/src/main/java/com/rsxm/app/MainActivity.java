@@ -135,13 +135,12 @@ public class MainActivity extends Activity {
             sp.edit().putBoolean("background_mode", on).apply();
             updateBgModeLabel();
             drawerLayout.closeDrawers();
+            // 注意：不向终端 pushOutput 提示文本——reasonix 在 alt screen 全屏自绘，
+            // 插入的文本会污染 TUI 画面（错误 screen 状态）；状态由菜单标签显示。
             if (on) {
                 startBackgroundService(true);
-                pushOutput("\r\n[后台运行模式已开启：Linux 环境将在后台持续运行，"
-                        + "可放心用 adb 打开其他应用（如微信）]\r\n");
             } else {
                 stopBackgroundService();
-                pushOutput("\r\n[后台运行模式已关闭：恢复正常前台行为]\r\n");
             }
         });
         updateBgModeLabel();
