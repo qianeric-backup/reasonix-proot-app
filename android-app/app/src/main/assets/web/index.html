@@ -52,7 +52,8 @@
   var fitAddon = new FitAddon.FitAddon();
   term.loadAddon(fitAddon);
   term.open(document.getElementById('term'));
-  term.focus();
+  // 注意：不自动 focus()——聚焦 xterm textarea 会弹出软键盘，压缩终端高度
+  // 导致 reasonix 按错误行数渲染（显示不全）。用户点击终端输入时自然聚焦。
 
   // Java -> JS：追加进程输出
   window.onTermData = function (d) {
@@ -98,7 +99,23 @@
   setTimeout(function () { try { term.refresh(0, term.rows - 1); } catch (e) {} }, 300);
   setTimeout(function () { try { term.refresh(0, term.rows - 1); } catch (e) {} }, 800);
   setTimeout(function () { try { term.refresh(0, term.rows - 1); } catch (e) {} }, 2000);
-  setTimeout(function () { try { term.focus(); } catch (e) {} }, 500);
+  // 延迟聚焦输入框（启动即就绪，无需点击）：聚焦触发 reasonix 按键盘调整后的
+  // 尺寸（rows 40->26）重新渲染完整 CLI 界面，且软键盘自动弹出可直接输入。
+  setTimeout(function () { try { term.focus(); } catch (e) {} }, 1200);
+  // 启动后强制重排渲染：WebView 合成层可能未绘制完整终端（点击才显示），
+  // 微调容器尺寸触发 reflow + 重新 fit，让 reasonix 输出完整显示。
+  setTimeout(function () {
+    var t = document.getElementById('term');
+    if (t) {
+      var h = t.offsetHeight;
+      t.style.height = (h > 10 ? h - 2 : h) + 'px';
+      setTimeout(function () {
+        t.style.height = '';
+        try { fitAddon.fit(); } catch (e) {}
+        try { term.refresh(0, term.rows - 1); } catch (e) {}
+      }, 80);
+    }
+  }, 700);
 
   // ---- 触摸滚动：浏览历史输出 ----
   // 发送翻页键（PageUp=ESC[5~ 查看历史 / PageDown=ESC[6~ 新内容）。
