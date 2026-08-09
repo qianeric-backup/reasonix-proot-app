@@ -80,6 +80,8 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // 启动加速：无 Activity 过渡动画
+        overridePendingTransition(0, 0);
         sCurrent = this;
         // 重新打开（Activity 重建）时清理上次残留的 proot/pty-bridge/reasonix 进程，
         // 避免双环境并存的 PTY 竞争导致 reasonix CLI 排版错乱。
