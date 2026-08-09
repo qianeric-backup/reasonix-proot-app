@@ -97,24 +97,6 @@ public class MainActivity extends Activity {
             killProotTree();
         }
 
-        webView = new WebView(this);
-        WebSettings s = webView.getSettings();
-        s.setJavaScriptEnabled(true);
-        s.setAllowFileAccess(true);
-        s.setDomStorageEnabled(true);
-        s.setCacheMode(WebSettings.LOAD_NO_CACHE);
-
-        webView.setWebViewClient(new WebViewClient() {
-            @Override
-            public void onPageFinished(WebView view, String url) {
-                // 终端 UI 就绪后再启动 Linux 环境，避免输出丢失
-                if (!environmentStarted) {
-                    environmentStarted = true;
-                    new Thread(MainActivity.this::startEnvironment).start();
-                }
-            }
-        });
-
         setContentView(R.layout.activity_main);
 
         drawerLayout = findViewById(R.id.drawer_layout);
@@ -131,6 +113,8 @@ public class MainActivity extends Activity {
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public void onPageFinished(WebView view, String url) {
+                // 聚焦 WebView 触发 xterm 渲染，避免启动后需点击才显示 CLI 界面
+                try { view.requestFocus(); } catch (Exception ignored) {}
                 if (!environmentStarted) {
                     environmentStarted = true;
                     new Thread(MainActivity.this::startEnvironment).start();

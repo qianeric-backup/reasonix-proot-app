@@ -76,6 +76,8 @@
   // 屏幕自适应：让终端填满视口，并按视口计算行列
   function doFit() {
     try { fitAddon.fit(); } catch (e) {}
+    // 强制刷新渲染：避免 WebView 启动时 xterm 未完整绘制（需点击才显示 CLI）
+    try { term.refresh(0, term.rows - 1); } catch (e) {}
     if (window.Android && window.Android.reportState) {
       try {
         Android.reportState(JSON.stringify({
@@ -92,6 +94,11 @@
   setTimeout(doFit, 100);
   setTimeout(doFit, 400);
   setTimeout(doFit, 1200);
+  // 启动后强制刷新渲染（多时机，避免"点击才显示"）
+  setTimeout(function () { try { term.refresh(0, term.rows - 1); } catch (e) {} }, 300);
+  setTimeout(function () { try { term.refresh(0, term.rows - 1); } catch (e) {} }, 800);
+  setTimeout(function () { try { term.refresh(0, term.rows - 1); } catch (e) {} }, 2000);
+  setTimeout(function () { try { term.focus(); } catch (e) {} }, 500);
 
   // ---- 触摸滚动：浏览历史输出 ----
   // 发送翻页键（PageUp=ESC[5~ 查看历史 / PageDown=ESC[6~ 新内容）。
