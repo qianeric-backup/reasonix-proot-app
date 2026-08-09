@@ -160,6 +160,7 @@ public class MainActivity extends Activity {
         });
         updateBgModeLabel();
         findViewById(R.id.menu_root).setOnClickListener(v -> { drawerLayout.closeDrawers(); showRootDialog(); });
+        findViewById(R.id.menu_skill).setOnClickListener(v -> { drawerLayout.closeDrawers(); showSkillInstallDialog(); });
 
         // 全屏功能面板：返回按钮关闭（系统返回键同样生效）
         findViewById(R.id.panel_back).setOnClickListener(v -> hidePanel());
@@ -466,6 +467,83 @@ public class MainActivity extends Activity {
             }
         });
         panel.addView(openBtn);
+    }
+
+    /** 安装 SKILL：skill 是 reasonix 的 AI 技能包（SKILL.md 规范格式），
+     *  写入 ~/.reasonix/skills/<name>/SKILL.md，reasonix 启动时自动加载，
+     *  对话内可用 /skill enable <name> 启用 */
+    private void showSkillInstallDialog() {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(16), dp(8), dp(16), 0);
+        panel.addView(createDarkTip(
+                "SKILL 是 reasonix 的 AI 技能包（SKILL.md 格式），安装后 reasonix 启动自动加载，"
+                        + "对话里可用 /skill enable <名称> 启用。\n"
+                        + "格式要求：开头必须有 YAML frontmatter，含 name 和 description 两行。"));
+        final EditText nameInput = createDarkEditText("SKILL 名称（如 mytool，仅字母数字._-）",
+                InputType.TYPE_CLASS_TEXT);
+        panel.addView(nameInput);
+        final EditText contentInput = new EditText(this);
+        contentInput.setHint("SKILL.md 内容（粘贴，含 frontmatter）");
+        contentInput.setTextColor(0xFFE0E0E0);
+        contentInput.setHintTextColor(0xFF666666);
+        contentInput.setTextSize(13);
+        contentInput.setGravity(android.view.Gravity.TOP);
+        contentInput.setSingleLine(false);
+        contentInput.setMinLines(8);
+        contentInput.setBackgroundColor(0xFF1A1A1A);
+        contentInput.setPadding(dp(10), dp(10), dp(10), dp(10));
+        panel.addView(contentInput);
+        Button installBtn = createDarkButton("安装 SKILL");
+        installBtn.setOnClickListener(v -> {
+            String name = nameInput.getText().toString().trim();
+            String content = contentInput.getText().toString();
+            if (name.isEmpty() || content.isEmpty()) {
+                pushOutput("\r\n[请填写 SKILL 名称和内容]\r\n");
+                return;
+            }
+            if (!name.matches("[A-Za-z0-9_.-]+")) {
+                pushOutput("\r\n[SKILL 名称仅允许字母、数字、_ . -]\r\n");
+                return;
+            }
+            installSkill(name, content);
+        });
+        panel.addView(installBtn);
+        Button listBtn = createDarkButton("查看已安装");
+        listBtn.setOnClickListener(v -> new Thread(() -> {
+            try {
+                String out = executeInGuest(
+                        "ls ~/.reasonix/skills 2>&1; echo ---; ls ~/.reasonix/skills/*/SKILL.md 2>&1", 12);
+                String msg = "\r\n[已安装 SKILL]\r\n" + (out == null ? "(无输出)" : out) + "\r\n";
+                runOnUiThread(() -> pushOutput(msg));
+            } catch (Exception e) {
+                Log.e(TAG, "list skills failed", e);
+            }
+        }, "skill-list").start());
+        panel.addView(listBtn);
+        showPanel("安装 SKILL", panel, null);
+    }
+
+    /** 安装 SKILL 文件：内容 base64 编码后经 guest 服务循环写入（避免转义/引号问题） */
+    private void installSkill(String name, String content) {
+        new Thread(() -> {
+            try {
+                String b64 = android.util.Base64.encodeToString(
+                        content.getBytes(StandardCharsets.UTF_8), android.util.Base64.NO_WRAP);
+                String cmd = "mkdir -p ~/.reasonix/skills/" + name
+                        + " && echo " + b64 + " | base64 -d > ~/.reasonix/skills/" + name + "/SKILL.md"
+                        + " && chmod 644 ~/.reasonix/skills/" + name + "/SKILL.md"
+                        + " && echo INSTALLED_OK && ls -la ~/.reasonix/skills/" + name + "/SKILL.md";
+                String out = executeInGuest(cmd, 12);
+                String msg = "\r\n[安装 SKILL: " + name + "]\r\n"
+                        + (out == null ? "(无响应)" : out)
+                        + "\r\n[完成。重启应用环境或 reasonix 内 /skill enable " + name + " 启用]\r\n";
+                runOnUiThread(() -> pushOutput(msg));
+            } catch (Exception e) {
+                Log.e(TAG, "install skill failed", e);
+                runOnUiThread(() -> pushOutput("\r\n[安装 SKILL 失败: " + e.getMessage() + "]\r\n"));
+            }
+        }, "skill-install").start();
     }
 
     /** 深色输入框（原生 Material 下划线风格，背景透明保持纯黑） */
