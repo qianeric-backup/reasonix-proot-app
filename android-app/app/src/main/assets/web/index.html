@@ -94,6 +94,20 @@
   setTimeout(doFit, 1200);
 
   // ---- 触摸滚动：浏览历史输出 ----
+  // 发送翻页键（PageUp=ESC[5~ 查看历史 / PageDown=ESC[6~ 新内容）。
+  // reasonix 的 transcript 滚动依赖翻页键（帮助文本明示），无论其在
+  // alt screen（TUI）还是普通 screen（恢复会话时 reasonix 不进 alt screen，
+  // 直接渲染历史到普通屏，此时仍响应翻页键滚动历史）。
+  function sendPageKey(dy) {
+    if (!(window.Android && window.Android.write)) return;
+    var step = 8;
+    var acc = dy;
+    while (Math.abs(acc) >= step) {
+      var key = acc > 0 ? '\u001b[5~' : '\u001b[6~';
+      acc -= (acc > 0 ? 1 : -1) * step;
+      try { Android.write(key); } catch (err) {}
+    }
+  }
   var touchStartY = null;
   var touchMoved = false;
   var wheelSent = false;
@@ -109,30 +123,24 @@
     if (Math.abs(dy) < 6) return;
     touchMoved = true;
     var inAlt = term.buffer.active.type === 'alternate';
-    if (inAlt && window.Android && window.Android.write) {
-      // TUI（alt screen）：reasonix 的 transcript 滚动使用 PageUp/PageDown 键
-      // （reasonix 帮助文本明示 `PageUp/PageDown | 滚动 transcript`，bubbles
-      // viewport 支持；SGR 滚轮事件 reasonix 不响应）。
-      // 把滑动模拟为翻页键：向下滑=查看历史=PageUp(ESC[5~)，向上滑=PageDown(ESC[6~)。
-      var step = 8;
-      var acc = dy;
-      while (Math.abs(acc) >= step) {
-        var key = acc > 0 ? '\u001b[5~' : '\u001b[6~';
-        acc -= (acc > 0 ? 1 : -1) * step;
-        try { Android.write(key); } catch (err) {}
-      }
-      if (!wheelSent) {
-        wheelSent = true;
-        if (window.Android && window.Android.reportState) {
-          try { Android.reportState('wheel-mode'); } catch (err) {}
-        }
-      }
+    if (inAlt) {
+      // reasonix TUI（alt screen）：翻页键滚动 transcript
+      sendPageKey(dy);
     } else {
-      // 主屏（shell）：滚动 xterm scrollback 浏览历史输出
+      // 普通 screen：可能是 shell（滚动 xterm scrollback 浏览历史输出），
+      // 也可能是 reasonix 恢复会话界面（渲染历史到普通屏）——
+      // 两者都做：滚 xterm scrollback + 发翻页键（shell 会忽略翻页键，无害）。
       if (dy > 0) {
         term.scrollLines(-Math.max(1, Math.ceil(Math.abs(dy) / 8)));
       } else {
         term.scrollLines(Math.max(1, Math.ceil(Math.abs(dy) / 8)));
+      }
+      sendPageKey(dy);
+    }
+    if (!wheelSent) {
+      wheelSent = true;
+      if (window.Android && window.Android.reportState) {
+        try { Android.reportState('wheel-mode'); } catch (err) {}
       }
     }
   }, { passive: true });
