@@ -838,6 +838,7 @@ public class MainActivity extends Activity {
         Button autoBtn = createDarkButton("自动连接（免配对直连）");
         autoBtn.setOnClickListener(v -> {
             saveAdbPrefs(prefs, pairPort, pairCode);
+            startAdbKeepAlive();   // 后台保活：滑动关闭应用后 adb 连接保持
             runAdbInGuest("adb-autoconnect", resultView, statusLine);
         });
         panel.addView(autoBtn);
@@ -852,6 +853,7 @@ public class MainActivity extends Activity {
                 resultView.setText("请先在手机上开启「无线调试」，抄下配对端口和 6 位配对码后填写。");
                 return;
             }
+            startAdbKeepAlive();   // 后台保活：滑动关闭应用后 adb 连接保持
             runAdbInGuest("adb-dopair " + pp + " " + pc, resultView, statusLine);
         });
         panel.addView(pairBtn);
@@ -870,11 +872,51 @@ public class MainActivity extends Activity {
             }
         });
         panel.addView(copyBtn);
+        // ADB 后台保活状态与控制（前台服务：滑动关闭应用后连接保持）
+        final TextView kaStatus = new TextView(this);
+        kaStatus.setTextColor(0xFF4CAF50);
+        kaStatus.setTextSize(13);
+        kaStatus.setPadding(dp(2), dp(10), dp(2), dp(4));
+        kaStatus.setText("后台保活：" + (getSharedPreferences("prefs", MODE_PRIVATE)
+                .getBoolean("adb_keepalive", false)
+                ? "开启（关闭应用后连接保持）" : "未开启（点自动连接/配对后自动开启）"));
+        panel.addView(kaStatus);
+        Button stopKaBtn = createDarkButton("停止 ADB 后台保活");
+        stopKaBtn.setOnClickListener(v -> {
+            stopAdbKeepAlive();
+            kaStatus.setText("后台保活：未开启");
+            pushOutput("\r\n[已停止 ADB 后台保活，滑动关闭应用后连接将断开]\r\n");
+        });
+        panel.addView(stopKaBtn);
         // 全屏面板展示（取代系统弹窗，避免遮挡控件）
         showPanel("ADB 无线调试", panel, null);
         // 操作逻辑优化：状态未知（首次/环境刚启动）时自动触发一次检测，免去手动点击
         if (status.contains("未知")) {
             statusLine.postDelayed(() -> runAdbInGuest("adb-autoconnect", resultView, statusLine), 600);
+        }
+    }
+
+    /** 启动 ADB 后台保活（前台服务）：滑动关闭应用后进程不被回收，adb 连接保持 */
+    private void startAdbKeepAlive() {
+        getSharedPreferences("prefs", MODE_PRIVATE).edit().putBoolean("adb_keepalive", true).apply();
+        try {
+            Intent i = new Intent(this, AdbKeepAliveService.class);
+            if (Build.VERSION.SDK_INT >= 26) startForegroundService(i);
+            else startService(i);
+            Log.d(TAG, "adb keepalive service started");
+        } catch (Exception e) {
+            Log.w(TAG, "start adb keepalive failed", e);
+        }
+    }
+
+    /** 停止 ADB 后台保活 */
+    private void stopAdbKeepAlive() {
+        getSharedPreferences("prefs", MODE_PRIVATE).edit().putBoolean("adb_keepalive", false).apply();
+        try {
+            stopService(new Intent(this, AdbKeepAliveService.class));
+            Log.d(TAG, "adb keepalive service stopped");
+        } catch (Exception e) {
+            Log.w(TAG, "stop adb keepalive failed", e);
         }
     }
 
