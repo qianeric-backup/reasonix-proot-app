@@ -112,8 +112,9 @@ if [ "$(adb_state)" = "device" ]; then
     adb devices -l
     exit 0
 fi
-echo "扫描 $HOST_IP:30000-49999 ...（约 10-40 秒）"
-PORTS=$(seq 30000 49999 | xargs -P 100 -I{} sh -c 'nc -z -w1 '"$HOST_IP"' {} >/dev/null 2>&1 && echo {}' 2>/dev/null | sort -n)
+echo "扫描 $HOST_IP:37000-49999 ...（约 10-60 秒）"
+# Android 无线调试端口范围：配对端口 37000-37099，连接端口 37000-49999（mDNS 容器不可用）
+PORTS=$(seq 37000 49999 | xargs -P 200 -I{} sh -c 'nc -z -w1 '"$HOST_IP"' {} >/dev/null 2>&1 && echo {}' 2>/dev/null | sort -n)
 if [ -z "$PORTS" ]; then
     status "no_port"
     echo "未找到开放端口。请确认手机已开启「无线调试」且与本机同 Wi-Fi。"
@@ -160,9 +161,10 @@ if [ -z "$PP" ] || [ -z "$PC" ]; then
 fi
 echo "配对 $HOST_IP:$PP ..."
 adb pair "$HOST_IP:$PP" "$PC" 2>&1 | head -3
-sleep 1
-echo "扫描连接端口 30000-49999 ..."
-PORTS=$(seq 30000 49999 | xargs -P 100 -I{} sh -c 'nc -z -w1 '"$HOST_IP"' {} >/dev/null 2>&1 && echo {}' 2>/dev/null | sort -n)
+# 配对成功后连接端口需数秒才就绪（adbd 激活），等待后再扫描
+sleep 4
+echo "扫描连接端口 37000-49999 ..."
+PORTS=$(seq 37000 49999 | xargs -P 200 -I{} sh -c 'nc -z -w1 '"$HOST_IP"' {} >/dev/null 2>&1 && echo {}' 2>/dev/null | sort -n)
 if [ -z "$PORTS" ]; then
     echo "未找到连接端口（请确认无线调试已开启）"
     echo "no_port" > /root/.adb_status
