@@ -879,8 +879,11 @@ public class MainActivity extends Activity {
         kaStatus.setPadding(dp(2), dp(10), dp(2), dp(4));
         kaStatus.setText("后台保活：" + (getSharedPreferences("prefs", MODE_PRIVATE)
                 .getBoolean("adb_keepalive", false)
-                ? "开启（关闭应用后连接保持）" : "未开启（点自动连接/配对后自动开启）"));
+                ? "开启（关闭应用后连接保持）" : "未开启（连接成功后自动开启）"));
         panel.addView(kaStatus);
+        panel.addView(createDarkTip(
+                "保活提示：请勿用「一键清理/强制停止」关闭应用，否则前台服务被系统终止、adb 连接会断开；"
+                        + "从最近任务划掉应用不影响连接。"));
         Button stopKaBtn = createDarkButton("停止 ADB 后台保活");
         stopKaBtn.setOnClickListener(v -> {
             stopAdbKeepAlive();
@@ -894,6 +897,8 @@ public class MainActivity extends Activity {
         if (status.contains("未知")) {
             statusLine.postDelayed(() -> runAdbInGuest("adb-autoconnect", resultView, statusLine), 600);
         }
+        // 已连接则确保后台保活开启（防面板未操作时连接状态不触发保活）
+        if (readAdbStatus().contains("已连接")) startAdbKeepAlive();
     }
 
     /** 启动 ADB 后台保活（前台服务）：滑动关闭应用后进程不被回收，adb 连接保持 */
@@ -936,6 +941,7 @@ public class MainActivity extends Activity {
                     statusLine.setText("连接状态：" + st);
                     statusLine.setTextColor(st.contains("已连接") ? 0xFF7FDB8A
                             : (st.contains("需配对") ? 0xFFFFD54F : 0xFFCCCCCC));
+                    if (st.contains("已连接")) startAdbKeepAlive();  // 连接成功自动开启后台保活
                 }
             });
         }, "adb-exec").start();
