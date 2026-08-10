@@ -311,14 +311,40 @@ if [ -x /usr/local/bin/reasonix ]; then
         mv -f /usr/local/bin/reasonix /usr/local/bin/reasonix.bin 2>/dev/null
         cat > /usr/local/bin/reasonix <<'SH'
 #!/bin/sh
-# reasonix wrapper: rx-wrap —— 每次启动前清理会话恢复标记，保证全新进入 TUI（alt screen）
+# reasonix wrapper: rx-wrap rsxm-project —— 每次启动前清理会话恢复标记，保证全新进入 TUI（alt screen）
 rm -f /root/.reasonix/projects/*/sessions/*.recovery.json \
       /root/.reasonix/projects/*/sessions/*.recovery \
       /root/.reasonix/projects/*/sessions/*.lease.* 2>/dev/null
+# 项目位置：/root/.rsxm-project 存在时 cd 到该项目目录（reasonix 按 cwd 识别项目）；
+# 目录不存在则自动创建（App 侧可能只写标记未建目录）
+P=$(cat /root/.rsxm-project 2>/dev/null)
+if [ -n "$P" ]; then
+    mkdir -p "$P" 2>/dev/null
+    cd "$P" 2>/dev/null || true
+fi
 exec /usr/local/bin/reasonix.bin "$@"
 SH
         chmod 755 /usr/local/bin/reasonix
         echo "[reasonix] 已创建启动包装（清理恢复标记，每次全新进入 TUI）"
+    elif ! grep -q "rsxm-project" /usr/local/bin/reasonix 2>/dev/null; then
+        # 旧版 wrapper（无项目位置功能）：升级重建（reasonix.bin 不动）
+        cat > /usr/local/bin/reasonix <<'SH'
+#!/bin/sh
+# reasonix wrapper: rx-wrap rsxm-project —— 每次启动前清理会话恢复标记，保证全新进入 TUI（alt screen）
+rm -f /root/.reasonix/projects/*/sessions/*.recovery.json \
+      /root/.reasonix/projects/*/sessions/*.recovery \
+      /root/.reasonix/projects/*/sessions/*.lease.* 2>/dev/null
+# 项目位置：/root/.rsxm-project 存在时 cd 到该项目目录（reasonix 按 cwd 识别项目）；
+# 目录不存在则自动创建（App 侧可能只写标记未建目录）
+P=$(cat /root/.rsxm-project 2>/dev/null)
+if [ -n "$P" ]; then
+    mkdir -p "$P" 2>/dev/null
+    cd "$P" 2>/dev/null || true
+fi
+exec /usr/local/bin/reasonix.bin "$@"
+SH
+        chmod 755 /usr/local/bin/reasonix
+        echo "[reasonix] 已升级启动包装（支持项目位置）"
     fi
 fi
 

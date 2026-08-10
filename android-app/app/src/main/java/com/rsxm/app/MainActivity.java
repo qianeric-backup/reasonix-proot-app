@@ -161,6 +161,7 @@ public class MainActivity extends Activity {
         updateBgModeLabel();
         findViewById(R.id.menu_root).setOnClickListener(v -> { drawerLayout.closeDrawers(); showRootDialog(); });
         findViewById(R.id.menu_skill).setOnClickListener(v -> { drawerLayout.closeDrawers(); showSkillInstallDialog(); });
+        findViewById(R.id.menu_project).setOnClickListener(v -> { drawerLayout.closeDrawers(); showProjectDialog(); });
 
         // 全屏功能面板：返回按钮关闭（系统返回键同样生效）
         findViewById(R.id.panel_back).setOnClickListener(v -> hidePanel());
@@ -544,6 +545,113 @@ public class MainActivity extends Activity {
                 runOnUiThread(() -> pushOutput("\r\n[安装 SKILL 失败: " + e.getMessage() + "]\r\n"));
             }
         }, "skill-install").start();
+    }
+
+    /* ==================== 项目位置 ==================== */
+
+    /** 项目位置：reasonix 工作目录（会话/记忆按项目隔离），切换后重启 reasonix 生效 */
+    private void showProjectDialog() {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(16), dp(8), dp(16), 0);
+        panel.addView(createDarkTip(
+                "项目是 reasonix 的工作目录，AI 会话、记忆、历史按项目隔离。\n"
+                        + "切换项目后自动重启 reasonix 进入新项目（当前会话会结束）。"));
+        final TextView curView = new TextView(this);
+        curView.setTextColor(0xFF4CAF50);
+        curView.setTextSize(14);
+        curView.setTypeface(null, android.graphics.Typeface.BOLD);
+        curView.setPadding(dp(2), dp(8), dp(2), dp(4));
+        panel.addView(curView);
+        final TextView listView = new TextView(this);
+        listView.setTextColor(0xFFCCCCCC);
+        listView.setTextSize(12);
+        listView.setPadding(dp(2), dp(4), dp(2), dp(8));
+        panel.addView(listView);
+        final EditText pathInput = createDarkEditText("项目路径（如 /root/myapp）", InputType.TYPE_CLASS_TEXT);
+        panel.addView(pathInput);
+        Button switchBtn = createDarkButton("切换项目并重启");
+        switchBtn.setOnClickListener(v -> {
+            String path = pathInput.getText().toString().trim();
+            if (path.isEmpty()) {
+                pushOutput("\r\n[请输入项目路径]\r\n");
+                return;
+            }
+            if (!path.startsWith("/")) path = "/root/" + path;
+            if (!path.matches("[/A-Za-z0-9_.-]+")) {
+                pushOutput("\r\n[路径仅允许字母、数字、_ . - /]\r\n");
+                return;
+            }
+            switchProject(path);
+        });
+        panel.addView(switchBtn);
+        Button defaultBtn = createDarkButton("恢复默认（/root）");
+        defaultBtn.setOnClickListener(v -> {
+            try {
+                File rootDir = new File(new File(getFilesDir(), "rootfs"), "root");
+                new File(rootDir, ".rsxm-project").delete();
+                pushOutput("\r\n[已恢复默认项目 /root，重启后生效]\r\n");
+                refreshProjectViews(curView, listView);
+            } catch (Exception e) {
+                Log.e(TAG, "reset project failed", e);
+            }
+        });
+        panel.addView(defaultBtn);
+        Button refreshBtn = createDarkButton("刷新项目列表");
+        refreshBtn.setOnClickListener(v -> refreshProjectViews(curView, listView));
+        panel.addView(refreshBtn);
+        refreshProjectViews(curView, listView);
+        showPanel("项目位置", panel, null);
+    }
+
+    /** 刷新当前项目与项目列表显示 */
+    private void refreshProjectViews(TextView curView, TextView listView) {
+        new Thread(() -> {
+            try {
+                File rootDir = new File(new File(getFilesDir(), "rootfs"), "root");
+                String cur = "默认（/root）";
+                File mark = new File(rootDir, ".rsxm-project");
+                if (mark.exists()) {
+                    String s = new String(java.nio.file.Files.readAllBytes(mark.toPath()),
+                            StandardCharsets.UTF_8).trim();
+                    if (!s.isEmpty()) cur = s;
+                }
+                String out = executeInGuest("ls ~/.reasonix/projects/ 2>&1", 10);
+                String list = (out == null || out.contains("No such file") || out.contains("No such"))
+                        ? "（暂无其他项目）" : out.trim();
+                final String c = cur, l = list;
+                runOnUiThread(() -> {
+                    curView.setText("当前项目：" + c);
+                    listView.setText("已有项目：\n" + l);
+                });
+            } catch (Exception e) {
+                Log.e(TAG, "refresh projects failed", e);
+            }
+        }, "project-list").start();
+    }
+
+    /** 切换项目：guest 内创建目录 + 写标记 + 重启环境（reasonix 从新项目目录启动） */
+    private void switchProject(String path) {
+        new Thread(() -> {
+            try {
+                String out = executeInGuest("mkdir -p " + path + " && echo MKDIR_OK", 10);
+                if (out == null || !out.contains("MKDIR_OK")) {
+                    runOnUiThread(() -> pushOutput(
+                            "\r\n[创建项目目录失败: " + (out == null ? "无响应" : out) + "]\r\n"));
+                    return;
+                }
+                File rootDir = new File(new File(getFilesDir(), "rootfs"), "root");
+                java.nio.file.Files.write(new File(rootDir, ".rsxm-project").toPath(),
+                        (path + "\n").getBytes(StandardCharsets.UTF_8));
+                runOnUiThread(() -> {
+                    pushOutput("\r\n[已切换到项目 " + path + "，正在重启 reasonix...]\r\n");
+                    restartEnvironment();
+                });
+            } catch (Exception e) {
+                Log.e(TAG, "switch project failed", e);
+                runOnUiThread(() -> pushOutput("\r\n[切换项目失败: " + e.getMessage() + "]\r\n"));
+            }
+        }, "project-switch").start();
     }
 
     /** 深色输入框（原生 Material 下划线风格，背景透明保持纯黑） */
