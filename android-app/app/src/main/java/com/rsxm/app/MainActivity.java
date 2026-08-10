@@ -169,6 +169,20 @@ public class MainActivity extends Activity {
             }
         });
         updateBgModeLabel();
+        findViewById(R.id.menu_yolo).setOnClickListener(v -> {
+            SharedPreferences sp = getSharedPreferences("prefs", MODE_PRIVATE);
+            boolean on = !sp.getBoolean("yolo_mode", true);
+            sp.edit().putBoolean("yolo_mode", on).apply();
+            syncYoloMark(on);
+            updateYoloModeLabel();
+            drawerLayout.closeDrawers();
+            // 立即生效：重启 reasonix 环境（reasonix 启动时 wrapper 读取新标记决定审批模式）。
+            // 不 pushOutput（reasonix alt screen 自绘会污染 TUI）；状态由菜单标签与重启日志显示。
+            restartEnvironment();
+        });
+        updateYoloModeLabel();
+        // 升级安装后 rootfs 可能没有 YOLO 标记：以偏好为准补写（默认开启）
+        syncYoloMark(getSharedPreferences("prefs", MODE_PRIVATE).getBoolean("yolo_mode", true));
         findViewById(R.id.menu_root).setOnClickListener(v -> { drawerLayout.closeDrawers(); showRootDialog(); });
         findViewById(R.id.menu_skill).setOnClickListener(v -> { drawerLayout.closeDrawers(); showSkillInstallDialog(); });
         findViewById(R.id.menu_project).setOnClickListener(v -> { drawerLayout.closeDrawers(); showProjectDialog(); });
@@ -418,6 +432,32 @@ public class MainActivity extends Activity {
         if (tv != null) {
             tv.setText(on ? "后台运行模式：开" : "后台运行模式：关");
             tv.setTextColor(on ? 0xFF4CAF50 : 0xFFFFFFFF);
+        }
+    }
+
+    /** YOLO 免审批模式标签：开启时 reasonix 完全跳过工具审批（--permission-mode bypassPermissions） */
+    private void updateYoloModeLabel() {
+        boolean on = getSharedPreferences("prefs", MODE_PRIVATE).getBoolean("yolo_mode", true);
+        TextView tv = findViewById(R.id.menu_yolo);
+        if (tv != null) {
+            tv.setText(on ? "YOLO 免审批模式：开" : "YOLO 免审批模式：关");
+            tv.setTextColor(on ? 0xFF4CAF50 : 0xFFFFFFFF);
+        }
+    }
+
+    /** 同步 YOLO 开关到 rootfs 标记（/root/.rsxm-yolo），reasonix wrapper 每次启动时读取决定审批模式 */
+    private void syncYoloMark(boolean on) {
+        try {
+            File rootDir = new File(new File(getFilesDir(), "rootfs"), "root");
+            File mark = new File(rootDir, ".rsxm-yolo");
+            if (on) {
+                if (!mark.exists()) mark.createNewFile();
+            } else {
+                mark.delete();
+            }
+            Log.d(TAG, "yolo mark " + (on ? "created" : "removed"));
+        } catch (Exception e) {
+            Log.w(TAG, "sync yolo mark failed", e);
         }
     }
 

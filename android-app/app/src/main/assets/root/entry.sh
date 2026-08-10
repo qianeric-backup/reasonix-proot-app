@@ -305,49 +305,37 @@ cat > /root/AGENTS.md <<'MD'
 - 若手机没有 root（无 su），`adb shell` 会回退到无线调试（需要先配对连接）。
 MD
 # 幂等/更新安全：reasonix 更新会覆盖 wrapper 位置（写入新二进制），entry.sh 检测到
-# reasonix 不是 wrapper（首行无标记）时，把新二进制备份为 reasonix.bin 并重建 wrapper；
-# restartEnvironment 必走 entry.sh，因此更新后自动重新包装。
+# reasonix 不是 wrapper（首行无标记）时，把新二进制备份为 reasonix.bin；
+# 无论是否 wrapper 都强制重写 wrapper（幂等），保证 reasonix 更新/升级后包装参数
+# （含 YOLO 审批模式开关）始终为最新；restartEnvironment 必走 entry.sh，因此更新后自动重新包装。
 if [ -x /usr/local/bin/reasonix ]; then
     # 检测 reasonix 是否已是 wrapper（ASCII 标记 rx-wrap；不用 head -1 + 中文，busybox grep 不可靠）
     if ! grep -q "rx-wrap" /usr/local/bin/reasonix 2>/dev/null; then
         mv -f /usr/local/bin/reasonix /usr/local/bin/reasonix.bin 2>/dev/null
-        cat > /usr/local/bin/reasonix <<'SH'
-#!/bin/sh
-# reasonix wrapper: rx-wrap rsxm-project —— 每次启动前清理会话恢复标记，保证全新进入 TUI（alt screen）
-rm -f /root/.reasonix/projects/*/sessions/*.recovery.json \
-      /root/.reasonix/projects/*/sessions/*.recovery \
-      /root/.reasonix/projects/*/sessions/*.lease.* 2>/dev/null
-# 项目位置：/root/.rsxm-project 存在时 cd 到该项目目录（reasonix 按 cwd 识别项目）；
-# 目录不存在则自动创建（App 侧可能只写标记未建目录）
-P=$(cat /root/.rsxm-project 2>/dev/null)
-if [ -n "$P" ]; then
-    mkdir -p "$P" 2>/dev/null
-    cd "$P" 2>/dev/null || true
-fi
-exec /usr/local/bin/reasonix.bin "$@"
-SH
-        chmod 755 /usr/local/bin/reasonix
-        echo "[reasonix] 已创建启动包装（清理恢复标记，每次全新进入 TUI）"
-    elif ! grep -q "rsxm-project" /usr/local/bin/reasonix 2>/dev/null; then
-        # 旧版 wrapper（无项目位置功能）：升级重建（reasonix.bin 不动）
-        cat > /usr/local/bin/reasonix <<'SH'
-#!/bin/sh
-# reasonix wrapper: rx-wrap rsxm-project —— 每次启动前清理会话恢复标记，保证全新进入 TUI（alt screen）
-rm -f /root/.reasonix/projects/*/sessions/*.recovery.json \
-      /root/.reasonix/projects/*/sessions/*.recovery \
-      /root/.reasonix/projects/*/sessions/*.lease.* 2>/dev/null
-# 项目位置：/root/.rsxm-project 存在时 cd 到该项目目录（reasonix 按 cwd 识别项目）；
-# 目录不存在则自动创建（App 侧可能只写标记未建目录）
-P=$(cat /root/.rsxm-project 2>/dev/null)
-if [ -n "$P" ]; then
-    mkdir -p "$P" 2>/dev/null
-    cd "$P" 2>/dev/null || true
-fi
-exec /usr/local/bin/reasonix.bin "$@"
-SH
-        chmod 755 /usr/local/bin/reasonix
-        echo "[reasonix] 已升级启动包装（支持项目位置）"
+        echo "[reasonix] 检测到新版本二进制，已备份为 reasonix.bin"
     fi
+    cat > /usr/local/bin/reasonix <<'SH'
+#!/bin/sh
+# reasonix wrapper: rx-wrap rsxm-yolo —— 清理会话恢复标记 + 项目位置 + 审批模式
+rm -f /root/.reasonix/projects/*/sessions/*.recovery.json \
+      /root/.reasonix/projects/*/sessions/*.recovery \
+      /root/.reasonix/projects/*/sessions/*.lease.* 2>/dev/null
+# 项目位置：/root/.rsxm-project 存在时 cd 到该项目目录（reasonix 按 cwd 识别项目）；
+# 目录不存在则自动创建（App 侧可能只写标记未建目录）
+P=$(cat /root/.rsxm-project 2>/dev/null)
+if [ -n "$P" ]; then
+    mkdir -p "$P" 2>/dev/null
+    cd "$P" 2>/dev/null || true
+fi
+# 审批模式（App 侧滑栏「YOLO 免审批模式」开关写 /root/.rsxm-yolo 标记）：
+#   标记存在 → bypassPermissions（完全跳过工具审批）；否则 → auto（自动批准普通工具，保留安全规则）
+if [ -f /root/.rsxm-yolo ]; then
+    exec /usr/local/bin/reasonix.bin --permission-mode bypassPermissions "$@"
+else
+    exec /usr/local/bin/reasonix.bin --permission-mode auto "$@"
+fi
+SH
+    chmod 755 /usr/local/bin/reasonix
 fi
 
 # 直接进入 reasonix 交互会话；退出后落到 shell（reasonix 为包装命令，再次运行同样清理）
