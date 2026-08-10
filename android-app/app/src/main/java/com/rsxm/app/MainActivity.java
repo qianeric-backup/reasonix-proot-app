@@ -962,8 +962,7 @@ public class MainActivity extends Activity {
     }
 
     /** 尝试 root 修复缺失的 native 库：从 APK 提取 so 到 nativeLibraryDir，并修复 SELinux 上下文（apk_data_file 域才可执行） */
-    private boolean tryRepairNativeLib(String nativeLibDir, String apkPath) {
-        if (findSuPath() == null) return false;   // 无 root 无法 chcon，跳过
+    private boolean tryRepairNativeLib(String nativeLibDir, String apkPath) {        if (findSuPath() == null) return false;   // 无 root 无法 chcon，跳过
         File tmp = new File(getFilesDir(), "tmpnative");
         tmp.mkdirs();
         boolean any = false;
@@ -996,6 +995,38 @@ public class MainActivity extends Activity {
             Log.w(TAG, "repair native lib failed", e);
         }
         return any && new File(nativeLibDir, "proot.so").exists();
+    }
+
+    /** 无 root 修复 native 库：引导覆盖安装本 APK（系统安装器重装会重新解压 native lib）；
+     *  首次需先允许"安装未知应用" */
+    private void promptReinstallForNativeLib() {
+        try {
+            if (Build.VERSION.SDK_INT >= 26 && !getPackageManager().canRequestPackageInstalls()) {
+                pushOutput("\r\n[native 库缺失。需要覆盖安装本应用来修复，请先允许「安装未知应用」]\r\n");
+                startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:" + getPackageName())));
+                return;
+            }
+            // 复制 APK 到 cacheDir 并打开系统安装器（覆盖安装 → 系统重新解压 native lib）
+            File apk = new File(getCacheDir(), "reinstall.apk");
+            try (java.io.InputStream in = new java.io.FileInputStream(getApplicationInfo().sourceDir);
+                 java.io.FileOutputStream out = new java.io.FileOutputStream(apk)) {
+                byte[] buf = new byte[65536];
+                int c;
+                while ((c = in.read(buf)) > 0) out.write(buf, 0, c);
+            }
+            Uri uri = androidx.core.content.FileProvider.getUriForFile(this,
+                    getPackageName() + ".fileprovider", apk);
+            Intent i = new Intent(Intent.ACTION_VIEW);
+            i.setDataAndType(uri, "application/vnd.android.package-archive");
+            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            pushOutput("\r\n[native 库缺失。已打开安装器，请点「更新/安装」覆盖安装本应用，系统将自动重新解压所需文件]\r\n");
+            startActivity(i);
+        } catch (Exception e) {
+            Log.e(TAG, "prompt reinstall failed", e);
+            pushOutput("\r\n[启动失败] native 库未解压：请卸载后重新安装本 APK（或电脑端用 adb install --no-streaming）\r\n");
+        }
     }
 
     /** 启动 ADB 后台保活（前台服务）：滑动关闭应用后进程不被回收，adb 连接保持 */
@@ -1867,12 +1898,8 @@ public class MainActivity extends Activity {
                 Log.d(TAG, "native lib auto-repaired, continue start");
                 pushOutput("\r\n[native 库缺失，已通过 root 自动修复，正在启动...]\r\n");
             } else {
-                String msg = "[启动失败] native 库未解压：" + proot + "\n"
-                        + "安装时 native 库解压失败（部分手机安装器/流式安装会跳过 lib）。\n"
-                        + "有 root 的设备会自动修复；无 root 请卸载后重新安装本 APK"
-                        + "（电脑端用 adb install --no-streaming），并确认存储空间充足。";
-                Log.e(TAG, msg);
-                pushOutput("\r\n" + msg + "\r\n");
+                // 无 root：自动引导覆盖安装（系统安装器重装会重新解压 native lib）
+                promptReinstallForNativeLib();
                 return;
             }
         }

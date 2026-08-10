@@ -16,12 +16,25 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <!-- Android 13 (API 33)+：通知需运行时权限，未授权时服务照常运行仅通知不可见 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 无 root 设备 native lib 缺失时引导覆盖安装（系统重新解压 lib） -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:label="RSXM"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
         android:theme="@style/AppTheme">
+
+        <!-- FileProvider：无 root 修复 native 库时向系统安装器分享 APK -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
         <activity
             android:name=".MainActivity"
