@@ -1823,6 +1823,15 @@ public class MainActivity extends Activity {
         // loader 机制读取装载，不走宿主 execve，天然绕过该限制。
         String nativeLibDir = getApplicationInfo().nativeLibraryDir;
         String proot = nativeLibDir + "/proot.so";
+        // 自检：native 库缺失多为安装时解压失败（流式/增量安装、空间不足），给出明确指引
+        if (!new File(proot).exists()) {
+            String msg = "[启动失败] native 库未解压：" + proot + "\n"
+                    + "多为安装时 native 库解压失败。请卸载后重新安装本 APK（或电脑端用 adb install --no-streaming 安装），"
+                    + "并确认手机存储空间充足后重试。";
+            Log.e(TAG, msg);
+            pushOutput("\r\n" + msg + "\r\n");
+            return;
+        }
         List<String> cmd = new ArrayList<>();
         cmd.add(proot);
         cmd.add("-0");                                   // 伪装 root（Alpine 文件属主为 root）
