@@ -1321,10 +1321,15 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onPause() {
+        super.onPause();
+        sWebActive = false;   // 退后台：WebView JS 暂停，终端输出改缓存（避免堆积阻塞 reasonix）
+    }
+
     protected void onResume() {
         super.onResume();
+        flushPendingOutput();   // 前台恢复：冲刷后台期间缓存的终端输出
         SharedPreferences prefs = getSharedPreferences("prefs", MODE_PRIVATE);
-
         // 后台运行模式：冻结一切自动前台操作（弹窗/重启），避免抢占其他应用前台
         // （adb-open-moments-summary.md 坑 4：守护界面抢回前台导致 UI 自动化窗口期过短）
         if (prefs.getBoolean("background_mode", false)) {
@@ -1794,14 +1799,39 @@ public class MainActivity extends Activity {
      *  输出转发到当前活动实例 sCurrent：后台 reader 线程在 Activity 重建后
      *  仍能把环境输出送到新实例的终端；无活动实例时直接丢弃（避免旧实例被
      *  daemon reader 长期持有无法 GC）。 */
+    /** 后台期间缓存终端输出（WebView JS 后台暂停，直接 evaluateJavascript 会堆积阻塞
+     *  → PTY 缓冲满 → reasonix 写阻塞超时 → 一直 retrying）；前台恢复时一次冲刷 */
+    private static final StringBuilder sPendingOutput = new StringBuilder();
+    private static volatile boolean sWebActive = true;
+
     private void pushOutput(String text) {
         Log.d(TAG, "OUT> " + (text.length() > 200 ? text.substring(0, 200) : text));
         final MainActivity target = sCurrent;
         if (target == null) return;
+        if (!sWebActive) {
+            synchronized (sPendingOutput) {
+                if (sPendingOutput.length() > 524288) sPendingOutput.setLength(0); // 512KB 保护
+                sPendingOutput.append(text);
+            }
+            return;
+        }
         target.ui.post(() -> {
             if (target.webView == null) return;
             target.webView.evaluateJavascript("window.onTermData(" + jsQuote(text) + ")", null);
         });
+    }
+
+    /** 前台恢复：把后台期间缓存的终端输出一次性冲刷到 WebView */
+    private void flushPendingOutput() {
+        sWebActive = true;
+        String batch;
+        synchronized (sPendingOutput) {
+            if (sPendingOutput.length() == 0) return;
+            batch = sPendingOutput.toString();
+            sPendingOutput.setLength(0);
+        }
+        if (webView == null) return;
+        webView.evaluateJavascript("window.onTermData(" + jsQuote(batch) + ")", null);
     }
 
     /** 生成安全的 JS 字符串字面量 */
