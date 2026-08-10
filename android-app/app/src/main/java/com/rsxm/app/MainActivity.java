@@ -820,6 +820,17 @@ public class MainActivity extends Activity {
                 "一键安装常用开发环境（基于 Alpine 包管理器，需联网）。\n"
                         + "点击后后台自动安装，进度实时显示在下方；大环境（Android/Go）耗时较长。"));
 
+        // root 检测（异步，su 实际可执行才算有 root）：安装/运行依赖 root 绕过 Android SELinux 限制
+        // （JVM 需可执行内存权限、apk 需硬链接权限），无 root 时所有环境按钮置灰不可用并提示。
+        // 检测前按钮先按置灰创建，避免误点；检测到 root 后恢复。
+        final TextView rootWarn = new TextView(this);
+        rootWarn.setText("⏳ 正在检测 root 权限...");
+        rootWarn.setTextColor(0xFFAAAAAA);
+        rootWarn.setTextSize(13);
+        rootWarn.setLineSpacing(0, 1.2f);
+        rootWarn.setPadding(0, dp(10), 0, dp(6));
+        panel.addView(rootWarn);
+
         // 安装进度区（初始隐藏，点击安装后显示；安装期间禁用所有按钮防止并发覆盖状态文件）
         LinearLayout progressBox = new LinearLayout(this);
         progressBox.setOrientation(LinearLayout.VERTICAL);
@@ -855,11 +866,40 @@ public class MainActivity extends Activity {
         for (int i = 0; i < envs.length; i++) {
             final String[] e = envs[i];
             Button b = createDarkButton(e[0] + "  ｜  " + e[2]);
-            b.setOnClickListener(v -> installDevEnv(e[0], e[1], b, buttons,
-                    progressBox, progressTitle, progressBar, progressText));
+            // 初始置灰不可用（root 检测通过后恢复）
+            b.setEnabled(false);
+            b.setTextColor(0xFF6A6A6A);
+            b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF1E1E1E));
             panel.addView(b);
             buttons[i] = b;
         }
+        // 异步检测 root 可用性（su 实际可执行而非仅文件存在；KernelSU/Magisk 已授权才可执行）
+        new Thread(() -> {
+            boolean rootOk = isRootAvailable();
+            runOnUiThread(() -> {
+                if (rootOk) {
+                    rootWarn.setVisibility(View.GONE);
+                    // 无安装任务在跑才恢复按钮；有任务保持禁用（进度区已显示）
+                    if (devEnvInstallingName == null) {
+                        for (int i = 0; i < envs.length; i++) {
+                            final String[] e = envs[i];
+                            Button b = buttons[i];
+                            b.setEnabled(true);
+                            b.setTextColor(0xFFFFFFFF);
+                            b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF262626));
+                            b.setOnClickListener(v -> installDevEnv(e[0], e[1], b, buttons,
+                                    progressBox, progressTitle, progressBar, progressText));
+                        }
+                    }
+                } else {
+                    rootWarn.setText("⚠ 未检测到可用的 root 权限（KernelSU/Magisk 未授权）。\n"
+                            + "开发环境安装/运行需 root 绕过 Android SELinux 限制\n"
+                            + "（JVM 需可执行内存权限、apk 需硬链接权限）。\n"
+                            + "请先在侧滑栏「Root 权限」中授权后再安装。");
+                    rootWarn.setTextColor(0xFFFF6B6B);
+                }
+            });
+        }, "dev-env-root-check").start();
         // 面板重开时若仍有安装任务在后台进行：恢复显示进度区并禁用全部按钮
         String installing = devEnvInstallingName;
         if (installing != null) {
@@ -1943,6 +1983,17 @@ public class MainActivity extends Activity {
             }
         } catch (Exception e) {
             Log.w(TAG, "setenforce failed: " + e);
+        }
+    }
+
+    /** root 可用性检测：su 实际可执行且返回 uid=0（KernelSU/Magisk 已授权给本应用才可执行） */
+    private boolean isRootAvailable() {
+        try {
+            String r = execRootCommand("id", 5);
+            return r != null && r.contains("uid=0");
+        } catch (Exception e) {
+            Log.w(TAG, "root availability check failed: " + e);
+            return false;
         }
     }
 
