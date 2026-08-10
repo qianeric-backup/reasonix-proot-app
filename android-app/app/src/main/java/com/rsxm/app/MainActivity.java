@@ -586,14 +586,15 @@ public class MainActivity extends Activity {
 
     /* ==================== 项目位置 ==================== */
 
-    /** 项目位置：reasonix 工作目录（会话/记忆按项目隔离），切换后重启 reasonix 生效 */
+    /** 项目：reasonix 工作目录（会话/记忆按项目隔离），可建在内部或手机目录（/sdcard），切换后重启生效 */
     private void showProjectDialog() {
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(dp(16), dp(8), dp(16), 0);
         panel.addView(createDarkTip(
                 "项目是 reasonix 的工作目录，AI 会话、记忆、历史按项目隔离。\n"
-                        + "切换项目后自动重启 reasonix 进入新项目（当前会话会结束）。"));
+                        + "可新建在内部（rootfs）或手机目录（/sdcard/ReasonixProjects，文件管理器可见）。\n"
+                        + "切换/新建后自动重启 reasonix 进入该项目（当前会话会结束）。"));
         final TextView curView = new TextView(this);
         curView.setTextColor(0xFF4CAF50);
         curView.setTextSize(14);
@@ -605,9 +606,28 @@ public class MainActivity extends Activity {
         listView.setTextSize(12);
         listView.setPadding(dp(2), dp(4), dp(2), dp(8));
         panel.addView(listView);
+        panel.addView(createDarkTip("新建项目：输入名称后选择创建位置"));
+        final EditText newInput = createDarkEditText("新项目名称（如 myapp，字母数字._-）",
+                InputType.TYPE_CLASS_TEXT);
+        panel.addView(newInput);
+        Button newSdcardBtn = createDarkButton("在手机目录创建并进入");
+        newSdcardBtn.setOnClickListener(v -> {
+            String name = newInput.getText().toString().trim();
+            if (!checkProjectName(name)) return;
+            createProject(name, true);
+        });
+        panel.addView(newSdcardBtn);
+        Button newInnerBtn = createDarkButton("在内部创建并进入");
+        newInnerBtn.setOnClickListener(v -> {
+            String name = newInput.getText().toString().trim();
+            if (!checkProjectName(name)) return;
+            createProject(name, false);
+        });
+        panel.addView(newInnerBtn);
+        panel.addView(createDarkTip("切换：也可直接输入完整路径（如 /root/xxx 或 /sdcard/ReasonixProjects/xxx）"));
         final EditText pathInput = createDarkEditText("项目路径（如 /root/myapp）", InputType.TYPE_CLASS_TEXT);
         panel.addView(pathInput);
-        Button switchBtn = createDarkButton("切换项目并重启");
+        Button switchBtn = createDarkButton("切换到该路径并重启");
         switchBtn.setOnClickListener(v -> {
             String path = pathInput.getText().toString().trim();
             if (path.isEmpty()) {
@@ -638,10 +658,50 @@ public class MainActivity extends Activity {
         refreshBtn.setOnClickListener(v -> refreshProjectViews(curView, listView));
         panel.addView(refreshBtn);
         refreshProjectViews(curView, listView);
-        showPanel("项目位置", panel, null);
+        showPanel("项目", panel, null);
     }
 
-    /** 刷新当前项目与项目列表显示 */
+    /** 校验新项目名称（目录名安全） */
+    private boolean checkProjectName(String name) {
+        if (name.isEmpty()) {
+            pushOutput("\r\n[请输入项目名称]\r\n");
+            return false;
+        }
+        if (!name.matches("[A-Za-z0-9_.-]+")) {
+            pushOutput("\r\n[项目名称仅允许字母、数字、_ . -]\r\n");
+            return false;
+        }
+        return true;
+    }
+
+    /** 新建项目：手机目录(/sdcard/ReasonixProjects/<name>)或内部(/root/<name>)，创建后切换并重启 */
+    private void createProject(String name, boolean inSdcard) {
+        String path = inSdcard
+                ? "/sdcard/ReasonixProjects/" + name
+                : "/root/" + name;
+        new Thread(() -> {
+            try {
+                String out = executeInGuest("mkdir -p " + path + " && echo MKDIR_OK", 10);
+                if (out == null || !out.contains("MKDIR_OK")) {
+                    runOnUiThread(() -> pushOutput(
+                            "\r\n[创建项目目录失败: " + (out == null ? "无响应" : out) + "]\r\n"));
+                    return;
+                }
+                File rootDir = new File(new File(getFilesDir(), "rootfs"), "root");
+                java.nio.file.Files.write(new File(rootDir, ".rsxm-project").toPath(),
+                        (path + "\n").getBytes(StandardCharsets.UTF_8));
+                runOnUiThread(() -> {
+                    pushOutput("\r\n[已创建项目 " + path + "，正在重启 reasonix...]\r\n");
+                    restartEnvironment();
+                });
+            } catch (Exception e) {
+                Log.e(TAG, "create project failed", e);
+                runOnUiThread(() -> pushOutput("\r\n[创建项目失败: " + e.getMessage() + "]\r\n"));
+            }
+        }, "project-create").start();
+    }
+
+    /** 刷新当前项目与项目列表显示（内部 + 手机目录） */
     private void refreshProjectViews(TextView curView, TextView listView) {
         new Thread(() -> {
             try {
@@ -653,9 +713,11 @@ public class MainActivity extends Activity {
                             StandardCharsets.UTF_8).trim();
                     if (!s.isEmpty()) cur = s;
                 }
-                String out = executeInGuest("ls ~/.reasonix/projects/ 2>&1", 10);
-                String list = (out == null || out.contains("No such file") || out.contains("No such"))
-                        ? "（暂无其他项目）" : out.trim();
+                String out = executeInGuest(
+                        "echo [内部]:; ls ~/.reasonix/projects/ 2>&1;"
+                                + " echo [手机目录 /sdcard/ReasonixProjects]:;"
+                                + " ls /sdcard/ReasonixProjects/ 2>&1", 10);
+                String list = (out == null || out.trim().isEmpty()) ? "（无）" : out.trim();
                 final String c = cur, l = list;
                 runOnUiThread(() -> {
                     curView.setText("当前项目：" + c);

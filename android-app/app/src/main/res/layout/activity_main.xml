@@ -136,7 +136,7 @@
                         android:layout_marginTop="1dp"
                         android:gravity="center_vertical"
                         android:paddingLeft="16dp"
-                        android:text="项目位置"
+                        android:text="项目"
                         android:textColor="#FFFFFF"
                         android:textSize="15sp" />
 
