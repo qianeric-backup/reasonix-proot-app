@@ -2268,8 +2268,11 @@ public class MainActivity extends Activity {
      *  仍能把环境输出送到新实例的终端；无活动实例时直接丢弃（避免旧实例被
      *  daemon reader 长期持有无法 GC）。 */
     /** 后台期间缓存终端输出（WebView JS 后台暂停，直接 evaluateJavascript 会堆积阻塞
-     *  → PTY 缓冲满 → reasonix 写阻塞超时 → 一直 retrying）；前台恢复时一次冲刷 */
+     *  → PTY 缓冲满 → reasonix 写阻塞超时 → 一直 retrying）；前台恢复时一次冲刷。
+     *  上限 4MB：AI 长回复/长输出在后台期间不被截断；超出仍清空兜底防无限增长。 */
     private static final StringBuilder sPendingOutput = new StringBuilder();
+    private static final int PENDING_OUTPUT_CAP = 4 * 1024 * 1024;   // 4MB 保护
+    private static final int FLUSH_CHUNK = 512 * 1024;               // 冲刷分块，防 WebView 卡顿
     private static volatile boolean sWebActive = true;
 
     private void pushOutput(String text) {
@@ -2278,7 +2281,7 @@ public class MainActivity extends Activity {
         if (target == null) return;
         if (!sWebActive) {
             synchronized (sPendingOutput) {
-                if (sPendingOutput.length() > 524288) sPendingOutput.setLength(0); // 512KB 保护
+                if (sPendingOutput.length() > PENDING_OUTPUT_CAP) sPendingOutput.setLength(0);
                 sPendingOutput.append(text);
             }
             return;
@@ -2289,17 +2292,22 @@ public class MainActivity extends Activity {
         });
     }
 
-    /** 前台恢复：把后台期间缓存的终端输出一次性冲刷到 WebView */
+    /** 前台恢复：把后台期间缓存的终端输出分块冲刷到 WebView（避免大字符串单次注入卡顿） */
     private void flushPendingOutput() {
         sWebActive = true;
-        String batch;
+        final String batch;
         synchronized (sPendingOutput) {
             if (sPendingOutput.length() == 0) return;
             batch = sPendingOutput.toString();
             sPendingOutput.setLength(0);
         }
         if (webView == null) return;
-        webView.evaluateJavascript("window.onTermData(" + jsQuote(batch) + ")", null);
+        final Handler h = new Handler(Looper.getMainLooper());
+        for (int i = 0; i < batch.length(); i += FLUSH_CHUNK) {
+            final String part = batch.substring(i, Math.min(batch.length(), i + FLUSH_CHUNK));
+            h.postDelayed(() -> webView.evaluateJavascript("window.onTermData(" + jsQuote(part) + ")", null),
+                    (i / FLUSH_CHUNK) * 80L);
+        }
     }
 
     /** 生成安全的 JS 字符串字面量 */
