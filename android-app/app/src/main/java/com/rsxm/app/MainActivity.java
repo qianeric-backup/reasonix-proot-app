@@ -28,6 +28,7 @@ import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 
 import java.io.File;
@@ -44,6 +45,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.zip.GZIPInputStream;
 
 import androidx.core.view.GravityCompat;
@@ -76,6 +79,12 @@ public class MainActivity extends Activity {
     private volatile boolean environmentStarted = false;
     /** 复用环境标记：后台模式开启时 Activity 重建复用运行中的 proot 环境 */
     private volatile boolean reuseEnv = false;
+    /** 开发环境安装中标记：防止并发安装互相覆盖 guest 内 .env-done/.env-install.log */
+    private volatile boolean devEnvInstalling = false;
+    /** 正在安装的环境名称（null 表示无任务；面板重开时据此恢复禁用/提示状态） */
+    private volatile String devEnvInstallingName = null;
+    /** apk 日志进度模式：(x/N) Installing ... */
+    private static final Pattern APK_PROGRESS = Pattern.compile("\\((\\d+)/(\\d+)\\)");
     private DrawerLayout drawerLayout;
     private TextView tvStatus;
 
@@ -762,14 +771,37 @@ public class MainActivity extends Activity {
 
     /* ==================== 开发环境 ==================== */
 
-    /** 开发环境：一键安装常用开发环境（Alpine 包管理器，后台安装 + 进度提示） */
+    /** 开发环境：一键安装常用开发环境（Alpine 包管理器，后台安装 + 面板内实时进度） */
     private void showDevEnvDialog() {
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(dp(16), dp(8), dp(16), 0);
         panel.addView(createDarkTip(
                 "一键安装常用开发环境（基于 Alpine 包管理器，需联网）。\n"
-                        + "点击后后台自动安装，进度输出到终端；大环境（Android/Go）耗时较长。"));
+                        + "点击后后台自动安装，进度实时显示在下方；大环境（Android/Go）耗时较长。"));
+
+        // 安装进度区（初始隐藏，点击安装后显示；安装期间禁用所有按钮防止并发覆盖状态文件）
+        LinearLayout progressBox = new LinearLayout(this);
+        progressBox.setOrientation(LinearLayout.VERTICAL);
+        progressBox.setPadding(0, dp(12), 0, dp(12));
+        progressBox.setVisibility(View.GONE);
+        TextView progressTitle = new TextView(this);
+        progressTitle.setTextColor(0xFFFFFFFF);
+        progressTitle.setTextSize(14);
+        progressTitle.setTypeface(null, android.graphics.Typeface.BOLD);
+        ProgressBar progressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        progressBar.setMax(100);
+        progressBar.setProgress(0);
+        TextView progressText = new TextView(this);
+        progressText.setTextColor(0xFFAAAAAA);
+        progressText.setTextSize(12);
+        progressText.setPadding(0, dp(4), 0, 0);
+        progressBox.addView(progressTitle);
+        progressBox.addView(progressBar, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(10)));
+        progressBox.addView(progressText);
+        panel.addView(progressBox);
+
         String[][] envs = {
                 {"Android 开发", "openjdk17-jdk gradle android-tools",
                         "JDK17 + Gradle + adb/fastboot（安卓应用构建）"},
@@ -779,17 +811,51 @@ public class MainActivity extends Activity {
                 {"C/C++ 开发", "gcc g++ make musl-dev", "GCC/G++ + Make + 头文件"},
                 {"通用工具", "git vim curl wget zip unzip", "Git/Vim/curl/wget 等"},
         };
-        for (String[] e : envs) {
+        final Button[] buttons = new Button[envs.length];
+        for (int i = 0; i < envs.length; i++) {
+            final String[] e = envs[i];
             Button b = createDarkButton(e[0] + "  ｜  " + e[2]);
-            b.setOnClickListener(v -> installDevEnv(e[0], e[1]));
+            b.setOnClickListener(v -> installDevEnv(e[0], e[1], b, buttons,
+                    progressBox, progressTitle, progressBar, progressText));
             panel.addView(b);
+            buttons[i] = b;
+        }
+        // 面板重开时若仍有安装任务在后台进行：恢复显示进度区并禁用全部按钮
+        String installing = devEnvInstallingName;
+        if (installing != null) {
+            progressBox.setVisibility(View.VISIBLE);
+            progressTitle.setText(installing + " 安装中...");
+            progressTitle.setTextColor(0xFFFFFFFF);
+            progressBar.setIndeterminate(true);
+            progressBar.setProgress(0);
+            progressText.setText("安装进行中，请稍候...");
+            for (Button b : buttons) b.setEnabled(false);
         }
         showPanel("开发环境", panel, null);
     }
 
-    /** 安装开发环境：guest 内 nohup 后台 apk add（防服务循环 20s timeout 杀掉长安装），轮询状态文件报告结果 */
-    private void installDevEnv(String name, String packages) {
-        pushOutput("\r\n[开发环境] 开始安装 " + name + "（后台进行，可继续使用终端）...\r\n");
+    /** 安装开发环境：guest 内 nohup 后台 apk add（防服务循环 20s timeout 杀掉长安装），
+     *  轮询状态文件报告结果，并解析 apk 日志 (x/N) 实时刷新面板进度条 */
+    private void installDevEnv(String name, String packages, Button btn, Button[] allBtns,
+                               View progressBox, TextView progressTitle, ProgressBar progressBar,
+                               TextView progressText) {
+        if (devEnvInstalling) {
+            runOnUiThread(() -> pushOutput("\r\n[开发环境] 已有安装任务进行中，请等待完成\r\n"));
+            return;
+        }
+        devEnvInstalling = true;
+        devEnvInstallingName = name;
+        pushOutput("\r\n[开发环境] 开始安装 " + name + "（后台进行，进度见面板，可继续使用终端）...\r\n");
+        runOnUiThread(() -> {
+            progressBox.setVisibility(View.VISIBLE);
+            progressTitle.setText(name + " 安装中...");
+            progressTitle.setTextColor(0xFFFFFFFF);
+            progressBar.setIndeterminate(true);
+            progressBar.setProgress(0);
+            progressText.setText("正在更新软件源索引...");
+            for (Button b : allBtns) b.setEnabled(false);
+            btn.setText(name + " 安装中...");
+        });
         new Thread(() -> {
             try {
                 // 安装脚本经 base64 写入 guest（服务循环用 sh -c "$CMD" 执行，命令内不能含双引号），
@@ -805,25 +871,81 @@ public class MainActivity extends Activity {
                         + "nohup sh /root/.env-install.sh > /dev/null 2>&1 & echo STARTED", 8);
                 long deadline = System.currentTimeMillis() + 15 * 60 * 1000L;
                 while (System.currentTimeMillis() < deadline) {
-                    Thread.sleep(4000);
+                    Thread.sleep(3000);
+                    // 读取日志尾部解析进度（fetch 阶段不定进度，(x/N) 阶段百分比）
+                    String log = executeInGuest("tail -80 /root/.env-install.log 2>/dev/null", 6);
+                    if (log != null) {
+                        Matcher m = APK_PROGRESS.matcher(log);
+                        int done = -1, total = -1;
+                        while (m.find()) {
+                            done = Integer.parseInt(m.group(1));
+                            total = Integer.parseInt(m.group(2));
+                        }
+                        final int fDone = done, fTotal = total;
+                        runOnUiThread(() -> {
+                            if (fDone > 0 && fTotal > 0) {
+                                int pct = Math.min(99, fDone * 100 / fTotal);
+                                progressBar.setIndeterminate(false);
+                                progressBar.setProgress(pct);
+                                progressText.setText("正在安装 " + fDone + "/" + fTotal + "（" + pct + "%）");
+                            } else if (log.contains("fetch")) {
+                                progressBar.setIndeterminate(true);
+                                progressText.setText("正在下载软件包...");
+                            } else {
+                                progressBar.setIndeterminate(true);
+                                progressText.setText("正在更新软件源索引...");
+                            }
+                        });
+                    }
                     String st = executeInGuest("cat /root/.env-done 2>/dev/null", 6);
                     if (st != null && st.contains("INSTALL_DONE_")) {
-                        String code = st.replaceAll("[^0-9]", "").trim();
-                        String log = executeInGuest("tail -4 /root/.env-install.log 2>/dev/null", 6);
+                        final String code = st.replaceAll("[^0-9]", "").trim();
+                        String doneLog = executeInGuest("tail -4 /root/.env-install.log 2>/dev/null", 6);
+                        final String tail = doneLog == null ? "" : doneLog;
+                        final boolean ok = code.equals("0");
                         String msg = "\r\n[开发环境] " + name + " 安装完成（apk 退出码 " + code + "）\n"
-                                + (log == null ? "" : log) + "\r\n"
-                                + (code.equals("0")
-                                ? "[完成] 可直接在终端使用 " + name + " 环境\r\n"
+                                + tail + "\r\n"
+                                + (ok ? "[完成] 可直接在终端使用 " + name + " 环境\r\n"
                                 : "[失败] 请检查网络（aliyun 源）后重试\r\n");
-                        runOnUiThread(() -> pushOutput(msg));
+                        runOnUiThread(() -> {
+                            progressTitle.setText(name + (ok ? " 安装完成" : " 安装失败"));
+                            progressTitle.setTextColor(ok ? 0xFF7FDB8A : 0xFFFF6B6B);
+                            progressBar.setIndeterminate(false);
+                            progressBar.setProgress(100);
+                            progressText.setText((ok ? "完成（退出码 0）" : "失败（apk 退出码 " + code + "）")
+                                    + "：" + tail.trim());
+                            btn.setText(name + (ok ? " ✓ 已安装" : "（失败，可重试）"));
+                            for (Button b : allBtns) b.setEnabled(true);
+                            pushOutput(msg);
+                        });
                         return;
                     }
                 }
-                runOnUiThread(() -> pushOutput(
-                        "\r\n[开发环境] " + name + " 安装超时（15 分钟），请检查网络后重试\r\n"));
+                runOnUiThread(() -> {
+                    progressTitle.setText(name + " 安装超时");
+                    progressTitle.setTextColor(0xFFFFD54F);
+                    progressBar.setIndeterminate(false);
+                    progressBar.setProgress(0);
+                    progressText.setText("超过 15 分钟未完成，请检查网络后重试");
+                    btn.setText(name + "（超时，可重试）");
+                    for (Button b : allBtns) b.setEnabled(true);
+                    pushOutput("\r\n[开发环境] " + name + " 安装超时（15 分钟），请检查网络后重试\r\n");
+                });
             } catch (Exception e) {
                 Log.e(TAG, "install dev env failed", e);
-                runOnUiThread(() -> pushOutput("\r\n[开发环境] 安装失败: " + e.getMessage() + "\r\n"));
+                runOnUiThread(() -> {
+                    progressTitle.setText(name + " 安装失败");
+                    progressTitle.setTextColor(0xFFFF6B6B);
+                    progressBar.setIndeterminate(false);
+                    progressBar.setProgress(0);
+                    progressText.setText("异常：" + e.getMessage());
+                    btn.setText(name + "（失败，可重试）");
+                    for (Button b : allBtns) b.setEnabled(true);
+                    pushOutput("\r\n[开发环境] 安装失败: " + e.getMessage() + "\r\n");
+                });
+            } finally {
+                devEnvInstalling = false;
+                devEnvInstallingName = null;
             }
         }, "dev-env").start();
     }
