@@ -892,13 +892,73 @@ public class MainActivity extends Activity {
         });
         panel.addView(stopKaBtn);
         // 全屏面板展示（取代系统弹窗，避免遮挡控件）
-        showPanel("ADB 无线调试", panel, null);
+        showPanel("ADB 无线调试", panel, this::stopAdbStatusRefresh);
+        // 状态实时刷新：面板打开期间每 4 秒用 adb devices 检查真实连接（防快照过期）
+        startAdbStatusRefresh(statusLine);
         // 操作逻辑优化：状态未知（首次/环境刚启动）时自动触发一次检测，免去手动点击
         if (status.contains("未知")) {
             statusLine.postDelayed(() -> runAdbInGuest("adb-autoconnect", resultView, statusLine), 600);
         }
         // 已连接则确保后台保活开启（防面板未操作时连接状态不触发保活）
         if (readAdbStatus().contains("已连接")) startAdbKeepAlive();
+    }
+
+    /** ADB 状态定时刷新：面板打开期间每 4 秒检查 adb devices 真实状态（防快照过期显示不符） */
+    private final Handler adbStatusRefresher = new Handler(Looper.getMainLooper());
+    private Runnable adbStatusTask;
+
+    private void startAdbStatusRefresh(TextView statusLine) {
+        stopAdbStatusRefresh();
+        adbStatusTask = new Runnable() {
+            @Override
+            public void run() {
+                new Thread(() -> {
+                    String st;
+                    boolean wifiOff = false;
+                    // 系统无线调试开关检测（经 root 桥读系统设置，不依赖 adb 连接）
+                    try {
+                        String wd = execRootCommand("settings get global adb_wifi_enabled", 4);
+                        if (wd != null && wd.trim().equals("0")) wifiOff = true;
+                    } catch (Exception ignored) {
+                    }
+                    if (wifiOff) {
+                        st = "系统无线调试未开启（请到 设置→开发者选项→无线调试 打开）";
+                        runOnUiThread(() -> stopAdbKeepAlive());   // 无线调试关闭，保活无意义
+                    } else {
+                        try {
+                            String out = executeInGuest("adb devices 2>&1", 6);
+                            java.util.regex.Matcher m = java.util.regex.Pattern
+                                    .compile("([\\d.]+:\\d+)\\s+device(\\s|$)")
+                                    .matcher(out == null ? "" : out);
+                            if (m.find()) {
+                                st = "已连接 " + m.group(1);
+                            } else if (out != null && out.contains("unauthorized")) {
+                                st = "需授权（手机弹窗点允许）";
+                            } else if (out != null && out.contains("offline")) {
+                                st = "设备离线（offline）";
+                            } else {
+                                st = "未连接（点自动连接或配对）";
+                            }
+                        } catch (Exception e) {
+                            st = "检测失败";
+                        }
+                    }
+                    final String statusText = st;   // final 副本供 lambda 捕获
+                    runOnUiThread(() -> {
+                        if (statusLine != null) statusLine.setText("连接状态：" + statusText);
+                        adbStatusRefresher.postDelayed(this, 4000);
+                    });
+                }, "adb-status").start();
+            }
+        };
+        adbStatusRefresher.postDelayed(adbStatusTask, 1200);
+    }
+
+    private void stopAdbStatusRefresh() {
+        if (adbStatusTask != null) {
+            adbStatusRefresher.removeCallbacks(adbStatusTask);
+            adbStatusTask = null;
+        }
     }
 
     /** 启动 ADB 后台保活（前台服务）：滑动关闭应用后进程不被回收，adb 连接保持 */
@@ -1377,6 +1437,20 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         flushPendingOutput();   // 前台恢复：冲刷后台期间缓存的终端输出
+        // 系统无线调试开关联动：已关闭时停止保活（避免"保持中"通知误导）
+        new Thread(() -> {
+            try {
+                String wd = execRootCommand("settings get global adb_wifi_enabled", 4);
+                if (wd != null && wd.trim().equals("0")
+                        && getSharedPreferences("prefs", MODE_PRIVATE).getBoolean("adb_keepalive", false)) {
+                    runOnUiThread(() -> {
+                        stopAdbKeepAlive();
+                        pushOutput("\r\n[检测到系统无线调试已关闭，已停止 ADB 后台保活]\r\n");
+                    });
+                }
+            } catch (Exception ignored) {
+            }
+        }, "adb-wifi-check").start();
         SharedPreferences prefs = getSharedPreferences("prefs", MODE_PRIVATE);
         // 后台运行模式：冻结一切自动前台操作（弹窗/重启），避免抢占其他应用前台
         // （adb-open-moments-summary.md 坑 4：守护界面抢回前台导致 UI 自动化窗口期过短）
