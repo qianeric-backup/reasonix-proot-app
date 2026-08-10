@@ -38,6 +38,12 @@ android {
             useLegacyPackaging true
         }
     }
+
+    androidResources {
+        // proot/loader 以不压缩（stored）方式打包：部分厂商安装器（vivo/iQOO 流式安装）
+        // 对 deflate 压缩的 native lib 解压失败导致 lib 缺失，stored 直接落盘无需解压
+        noCompress += ["proot.so", "loader.so"]
+    }
 }
 
 dependencies {
