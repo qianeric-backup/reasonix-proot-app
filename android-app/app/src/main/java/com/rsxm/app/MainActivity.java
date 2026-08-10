@@ -166,6 +166,11 @@ public class MainActivity extends Activity {
         // 全屏功能面板：返回按钮关闭（系统返回键同样生效）
         findViewById(R.id.panel_back).setOnClickListener(v -> hidePanel());
 
+        // 测试/调试入口：am start -e force_reinstall true 模拟无 root 设备的自动修复流程
+        if (getIntent().getBooleanExtra("force_reinstall", false)) {
+            new Handler(Looper.getMainLooper()).postDelayed(this::promptReinstallForNativeLib, 3000);
+        }
+
         requestStoragePermission();
 
         // 后台运行模式恢复：上次开启过（app 被系统回收后重新打开）→ 重新拉起保活服务，
@@ -997,8 +1002,10 @@ public class MainActivity extends Activity {
         return any && new File(nativeLibDir, "proot.so").exists();
     }
 
-    /** 无 root 修复 native 库：引导覆盖安装本 APK（系统安装器重装会重新解压 native lib）；
-     *  首次需先允许"安装未知应用" */
+    /** 无 root 修复 native 库：自动打开系统安装器引导覆盖安装本 APK
+     *  （覆盖安装后系统重新解压 native lib）。
+     *  注意：Android 安全机制要求无 root 覆盖安装必须用户确认一次（静默自更新仅系统应用可用），
+     *  因此自动打开安装器后用户点「更新」即可，无需找 APK/手动选择。首次需先允许"安装未知应用" */
     private void promptReinstallForNativeLib() {
         try {
             if (Build.VERSION.SDK_INT >= 26 && !getPackageManager().canRequestPackageInstalls()) {
@@ -1007,8 +1014,10 @@ public class MainActivity extends Activity {
                         Uri.parse("package:" + getPackageName())));
                 return;
             }
-            // 复制 APK 到 cacheDir 并打开系统安装器（覆盖安装 → 系统重新解压 native lib）
-            File apk = new File(getCacheDir(), "reinstall.apk");
+            // 复制 APK 到 cacheDir/apk/ 并打开系统安装器（覆盖安装 → 系统重新解压 native lib）
+            File apkDir = new File(getCacheDir(), "apk");
+            apkDir.mkdirs();
+            File apk = new File(apkDir, "reinstall.apk");
             try (java.io.InputStream in = new java.io.FileInputStream(getApplicationInfo().sourceDir);
                  java.io.FileOutputStream out = new java.io.FileOutputStream(apk)) {
                 byte[] buf = new byte[65536];
@@ -1021,7 +1030,7 @@ public class MainActivity extends Activity {
             i.setDataAndType(uri, "application/vnd.android.package-archive");
             i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            pushOutput("\r\n[native 库缺失。已打开安装器，请点「更新/安装」覆盖安装本应用，系统将自动重新解压所需文件]\r\n");
+            pushOutput("\r\n[native 库缺失。已自动打开安装器，请点「更新/安装」覆盖安装本应用（系统将重新解压所需文件）]\r\n");
             startActivity(i);
         } catch (Exception e) {
             Log.e(TAG, "prompt reinstall failed", e);
