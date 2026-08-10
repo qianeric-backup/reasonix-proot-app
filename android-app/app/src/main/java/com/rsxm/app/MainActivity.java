@@ -479,7 +479,7 @@ public class MainActivity extends Activity {
         panel.setPadding(dp(16), dp(8), dp(16), 0);
         panel.addView(createDarkTip(
                 "SKILL 是 reasonix 的 AI 技能包（SKILL.md 格式），安装后 reasonix 启动自动加载，"
-                        + "对话里可用 /skill enable <名称> 启用。\n"
+                        + "对话里可用 /skill enable <名称> 启用；不需要时可在此卸载。\n"
                         + "格式要求：开头必须有 YAML frontmatter，含 name 和 description 两行。"));
         final EditText nameInput = createDarkEditText("SKILL 名称（如 mytool，仅字母数字._-）",
                 InputType.TYPE_CLASS_TEXT);
@@ -522,7 +522,44 @@ public class MainActivity extends Activity {
             }
         }, "skill-list").start());
         panel.addView(listBtn);
-        showPanel("安装 SKILL", panel, null);
+        panel.addView(createDarkTip("卸载：填写要删除的 SKILL 名称后点「卸载 SKILL」"));
+        final EditText uninstallInput = createDarkEditText("卸载 SKILL 名称（如 mytool）",
+                InputType.TYPE_CLASS_TEXT);
+        panel.addView(uninstallInput);
+        Button uninstallBtn = createDarkButton("卸载 SKILL");
+        uninstallBtn.setOnClickListener(v -> {
+            String name = uninstallInput.getText().toString().trim();
+            if (name.isEmpty()) {
+                pushOutput("\r\n[请输入要卸载的 SKILL 名称]\r\n");
+                return;
+            }
+            if (!name.matches("[A-Za-z0-9_.-]+")) {
+                pushOutput("\r\n[SKILL 名称仅允许字母、数字、_ . -]\r\n");
+                return;
+            }
+            uninstallSkill(name);
+        });
+        panel.addView(uninstallBtn);
+        showPanel("skill功能", panel, null);
+    }
+
+    /** 卸载 SKILL：删除 ~/.reasonix/skills/<name> 目录 */
+    private void uninstallSkill(String name) {
+        new Thread(() -> {
+            try {
+                String out = executeInGuest(
+                        "rm -rf ~/.reasonix/skills/" + name
+                                + " && echo UNINSTALLED_OK && ls ~/.reasonix/skills/ 2>&1", 10);
+                String msg = "\r\n[卸载 SKILL: " + name + "]\r\n"
+                        + ((out != null && out.contains("UNINSTALLED_OK"))
+                            ? "已删除。剩余 SKILL：\n" + out.replace("UNINSTALLED_OK", "").trim()
+                            : (out == null ? "(无响应)" : out)) + "\r\n";
+                runOnUiThread(() -> pushOutput(msg));
+            } catch (Exception e) {
+                Log.e(TAG, "uninstall skill failed", e);
+                runOnUiThread(() -> pushOutput("\r\n[卸载 SKILL 失败: " + e.getMessage() + "]\r\n"));
+            }
+        }, "skill-uninstall").start();
     }
 
     /** 安装 SKILL 文件：内容 base64 编码后经 guest 服务循环写入（避免转义/引号问题） */
