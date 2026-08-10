@@ -961,6 +961,43 @@ public class MainActivity extends Activity {
         }
     }
 
+    /** 尝试 root 修复缺失的 native 库：从 APK 提取 so 到 nativeLibraryDir，并修复 SELinux 上下文（apk_data_file 域才可执行） */
+    private boolean tryRepairNativeLib(String nativeLibDir, String apkPath) {
+        if (findSuPath() == null) return false;   // 无 root 无法 chcon，跳过
+        File tmp = new File(getFilesDir(), "tmpnative");
+        tmp.mkdirs();
+        boolean any = false;
+        try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(apkPath)) {
+            String prefix = "lib/arm64-v8a/";
+            java.util.Enumeration<? extends java.util.zip.ZipEntry> en = zf.entries();
+            while (en.hasMoreElements()) {
+                java.util.zip.ZipEntry e = en.nextElement();
+                String n = e.getName();
+                if (n.startsWith(prefix) && n.endsWith(".so")) {
+                    String name = n.substring(prefix.length());
+                    File out = new File(tmp, name);
+                    try (java.io.InputStream in = zf.getInputStream(e);
+                         java.io.FileOutputStream fos = new java.io.FileOutputStream(out)) {
+                        byte[] buf = new byte[65536];
+                        int c;
+                        while ((c = in.read(buf)) > 0) fos.write(buf, 0, c);
+                    }
+                    String r = execRootCommand("cp " + out.getAbsolutePath() + " " + nativeLibDir + "/" + name
+                            + " && chmod 755 " + nativeLibDir + "/" + name
+                            + " && chcon u:object_r:apk_data_file:s0 " + nativeLibDir + "/" + name
+                            + " && echo REPAIR_OK", 30);
+                    if (r != null && r.contains("REPAIR_OK")) {
+                        Log.d(TAG, "native lib repaired: " + name);
+                        any = true;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "repair native lib failed", e);
+        }
+        return any && new File(nativeLibDir, "proot.so").exists();
+    }
+
     /** 启动 ADB 后台保活（前台服务）：滑动关闭应用后进程不被回收，adb 连接保持 */
     private void startAdbKeepAlive() {
         getSharedPreferences("prefs", MODE_PRIVATE).edit().putBoolean("adb_keepalive", true).apply();
@@ -1823,14 +1860,21 @@ public class MainActivity extends Activity {
         // loader 机制读取装载，不走宿主 execve，天然绕过该限制。
         String nativeLibDir = getApplicationInfo().nativeLibraryDir;
         String proot = nativeLibDir + "/proot.so";
-        // 自检：native 库缺失多为安装时解压失败（流式/增量安装、空间不足），给出明确指引
+        // 自检：native 库缺失多为安装时解压失败（部分厂商安装器/流式安装不解压 lib）。
+        // 有 root 时自动从 APK 提取并修复（复制 + chcon 回 apk_data_file 域，否则 SELinux 拒绝执行）
         if (!new File(proot).exists()) {
-            String msg = "[启动失败] native 库未解压：" + proot + "\n"
-                    + "多为安装时 native 库解压失败。请卸载后重新安装本 APK（或电脑端用 adb install --no-streaming 安装），"
-                    + "并确认手机存储空间充足后重试。";
-            Log.e(TAG, msg);
-            pushOutput("\r\n" + msg + "\r\n");
-            return;
+            if (tryRepairNativeLib(nativeLibDir, getApplicationInfo().sourceDir)) {
+                Log.d(TAG, "native lib auto-repaired, continue start");
+                pushOutput("\r\n[native 库缺失，已通过 root 自动修复，正在启动...]\r\n");
+            } else {
+                String msg = "[启动失败] native 库未解压：" + proot + "\n"
+                        + "安装时 native 库解压失败（部分手机安装器/流式安装会跳过 lib）。\n"
+                        + "有 root 的设备会自动修复；无 root 请卸载后重新安装本 APK"
+                        + "（电脑端用 adb install --no-streaming），并确认存储空间充足。";
+                Log.e(TAG, msg);
+                pushOutput("\r\n" + msg + "\r\n");
+                return;
+            }
         }
         List<String> cmd = new ArrayList<>();
         cmd.add(proot);
