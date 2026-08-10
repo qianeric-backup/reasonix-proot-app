@@ -853,14 +853,17 @@ public class MainActivity extends Activity {
         progressBox.addView(progressText);
         panel.addView(progressBox);
 
+        // envs 第 4 列：是否依赖 root。实测（enforcing）仅 Android 开发依赖
+        // （JVM 需 execmem，SELinux enforcing 下 mprotect RWX 被拒无法启动）；
+        // Python/Node/Go/C-C++/通用工具 安装与运行均无需 root。
         String[][] envs = {
                 {"Android 开发", "openjdk17-jdk gradle android-tools",
-                        "JDK17 + Gradle + adb/fastboot（安卓应用构建）"},
-                {"Python 开发", "python3 py3-pip", "Python3 + pip"},
-                {"Node.js", "nodejs npm", "Node.js + npm"},
-                {"Go 开发", "go", "Go 语言工具链"},
-                {"C/C++ 开发", "gcc g++ make musl-dev", "GCC/G++ + Make + 头文件"},
-                {"通用工具", "git vim curl wget zip unzip", "Git/Vim/curl/wget 等"},
+                        "JDK17 + Gradle + adb/fastboot（安卓应用构建）", "1"},
+                {"Python 开发", "python3 py3-pip", "Python3 + pip", "0"},
+                {"Node.js", "nodejs npm", "Node.js + npm", "0"},
+                {"Go 开发", "go", "Go 语言工具链", "0"},
+                {"C/C++ 开发", "gcc g++ make musl-dev", "GCC/G++ + Make + 头文件", "0"},
+                {"通用工具", "git vim curl wget zip unzip", "Git/Vim/curl/wget 等", "0"},
         };
         final Button[] buttons = new Button[envs.length];
         for (int i = 0; i < envs.length; i++) {
@@ -892,11 +895,25 @@ public class MainActivity extends Activity {
                         }
                     }
                 } else {
+                    // 无 root：仅依赖 root 的环境保持置灰，其余恢复可用（实测不需要 root）
                     rootWarn.setText("⚠ 未检测到可用的 root 权限（KernelSU/Magisk 未授权）。\n"
-                            + "开发环境安装/运行需 root 绕过 Android SELinux 限制\n"
-                            + "（JVM 需可执行内存权限、apk 需硬链接权限）。\n"
-                            + "请先在侧滑栏「Root 权限」中授权后再安装。");
+                            + "Android 开发依赖 root（JVM 需可执行内存权限，\n"
+                            + "SELinux enforcing 下无法启动），已置灰。\n"
+                            + "Python/Node.js/Go/C-C++/通用工具无需 root，可直接安装使用。");
                     rootWarn.setTextColor(0xFFFF6B6B);
+                    if (devEnvInstallingName == null) {
+                        for (int i = 0; i < envs.length; i++) {
+                            final String[] e = envs[i];
+                            Button b = buttons[i];
+                            if ("0".equals(e[3])) {   // 不依赖 root：恢复可用
+                                b.setEnabled(true);
+                                b.setTextColor(0xFFFFFFFF);
+                                b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF262626));
+                                b.setOnClickListener(v -> installDevEnv(e[0], e[1], b, buttons,
+                                        progressBox, progressTitle, progressBar, progressText));
+                            }
+                        }
+                    }
                 }
             });
         }, "dev-env-root-check").start();
