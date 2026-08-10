@@ -1903,6 +1903,7 @@ public class MainActivity extends Activity {
 
     private void startEnvironment() {
         Log.d(TAG, "startEnvironment: begin");
+        applySelinuxWorkaround();   // SELinux 适配：JVM/apk 需要 execmem/link 权限（见方法注释）
         try {
             File files = getFilesDir();
             File rootfs = new File(files, "rootfs");
@@ -1917,6 +1918,31 @@ public class MainActivity extends Activity {
         } catch (Exception e) {
             Log.e(TAG, "startEnvironment failed", e);
             pushOutput("\r\n[初始化失败] " + e + "\r\n");
+        }
+    }
+
+    /** SELinux 适配：untrusted_app 默认无 execmem/execmod/link 权限，导致
+     *  JVM(mprotect RWX) 启动失败（"Failed to mark memory page as executable"）
+     *  与 apk 硬链接安装失败（avc denied { link }）。
+     *  KernelSU/Magisk root 下 setenforce 0 后两者均恢复正常；无 root 时静默跳过。
+     *  重启后 SELinux 恢复 enforcing，故每次环境启动时执行。 */
+    private void applySelinuxWorkaround() {
+        try {
+            String su = findSuPath();
+            if (su == null) return;
+            Process p = new ProcessBuilder(su, "-c", "setenforce 0 2>/dev/null; getenforce")
+                    .redirectErrorStream(true).start();
+            if (p.waitFor(5, TimeUnit.SECONDS)) {
+                byte[] out = new byte[128];
+                int n = p.getInputStream().read(out);
+                String s = n > 0 ? new String(out, 0, n, StandardCharsets.UTF_8).trim() : "";
+                Log.d(TAG, "SELinux workaround: " + s);
+            } else {
+                p.destroy();
+                Log.w(TAG, "setenforce timeout");
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "setenforce failed: " + e);
         }
     }
 
