@@ -17,6 +17,7 @@ import android.provider.Settings;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.InputType;
+import android.util.Base64;
 import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
@@ -162,6 +163,7 @@ public class MainActivity extends Activity {
         findViewById(R.id.menu_root).setOnClickListener(v -> { drawerLayout.closeDrawers(); showRootDialog(); });
         findViewById(R.id.menu_skill).setOnClickListener(v -> { drawerLayout.closeDrawers(); showSkillInstallDialog(); });
         findViewById(R.id.menu_project).setOnClickListener(v -> { drawerLayout.closeDrawers(); showProjectDialog(); });
+        findViewById(R.id.menu_dev).setOnClickListener(v -> { drawerLayout.closeDrawers(); showDevEnvDialog(); });
 
         // 全屏功能面板：返回按钮关闭（系统返回键同样生效）
         findViewById(R.id.panel_back).setOnClickListener(v -> hidePanel());
@@ -758,6 +760,74 @@ public class MainActivity extends Activity {
         }, "project-switch").start();
     }
 
+    /* ==================== 开发环境 ==================== */
+
+    /** 开发环境：一键安装常用开发环境（Alpine 包管理器，后台安装 + 进度提示） */
+    private void showDevEnvDialog() {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(16), dp(8), dp(16), 0);
+        panel.addView(createDarkTip(
+                "一键安装常用开发环境（基于 Alpine 包管理器，需联网）。\n"
+                        + "点击后后台自动安装，进度输出到终端；大环境（Android/Go）耗时较长。"));
+        String[][] envs = {
+                {"Android 开发", "openjdk17-jdk gradle android-tools",
+                        "JDK17 + Gradle + adb/fastboot（安卓应用构建）"},
+                {"Python 开发", "python3 py3-pip", "Python3 + pip"},
+                {"Node.js", "nodejs npm", "Node.js + npm"},
+                {"Go 开发", "go", "Go 语言工具链"},
+                {"C/C++ 开发", "gcc g++ make musl-dev", "GCC/G++ + Make + 头文件"},
+                {"通用工具", "git vim curl wget zip unzip", "Git/Vim/curl/wget 等"},
+        };
+        for (String[] e : envs) {
+            Button b = createDarkButton(e[0] + "  ｜  " + e[2]);
+            b.setOnClickListener(v -> installDevEnv(e[0], e[1]));
+            panel.addView(b);
+        }
+        showPanel("开发环境", panel, null);
+    }
+
+    /** 安装开发环境：guest 内 nohup 后台 apk add（防服务循环 20s timeout 杀掉长安装），轮询状态文件报告结果 */
+    private void installDevEnv(String name, String packages) {
+        pushOutput("\r\n[开发环境] 开始安装 " + name + "（后台进行，可继续使用终端）...\r\n");
+        new Thread(() -> {
+            try {
+                // 安装脚本经 base64 写入 guest（服务循环用 sh -c "$CMD" 执行，命令内不能含双引号），
+                // 再 nohup 后台执行，避免 20s timeout 杀掉长安装
+                String script = "#!/bin/sh\n"
+                        + "apk update > /root/.env-install.log 2>&1\n"
+                        + "echo \"--- 安装 " + name + " ---\" >> /root/.env-install.log\n"
+                        + "apk add --no-cache " + packages + " >> /root/.env-install.log 2>&1\n"
+                        + "echo INSTALL_DONE_$? > /root/.env-done\n";
+                String b64 = Base64.encodeToString(script.getBytes("UTF-8"), Base64.NO_WRAP);
+                executeInGuest("rm -f /root/.env-done /root/.env-install.log; "
+                        + "echo " + b64 + " | base64 -d > /root/.env-install.sh; chmod +x /root/.env-install.sh; "
+                        + "nohup sh /root/.env-install.sh > /dev/null 2>&1 & echo STARTED", 8);
+                long deadline = System.currentTimeMillis() + 15 * 60 * 1000L;
+                while (System.currentTimeMillis() < deadline) {
+                    Thread.sleep(4000);
+                    String st = executeInGuest("cat /root/.env-done 2>/dev/null", 6);
+                    if (st != null && st.contains("INSTALL_DONE_")) {
+                        String code = st.replaceAll("[^0-9]", "").trim();
+                        String log = executeInGuest("tail -4 /root/.env-install.log 2>/dev/null", 6);
+                        String msg = "\r\n[开发环境] " + name + " 安装完成（apk 退出码 " + code + "）\n"
+                                + (log == null ? "" : log) + "\r\n"
+                                + (code.equals("0")
+                                ? "[完成] 可直接在终端使用 " + name + " 环境\r\n"
+                                : "[失败] 请检查网络（aliyun 源）后重试\r\n");
+                        runOnUiThread(() -> pushOutput(msg));
+                        return;
+                    }
+                }
+                runOnUiThread(() -> pushOutput(
+                        "\r\n[开发环境] " + name + " 安装超时（15 分钟），请检查网络后重试\r\n"));
+            } catch (Exception e) {
+                Log.e(TAG, "install dev env failed", e);
+                runOnUiThread(() -> pushOutput("\r\n[开发环境] 安装失败: " + e.getMessage() + "\r\n"));
+            }
+        }, "dev-env").start();
+    }
+
     /** 深色输入框（原生 Material 下划线风格，背景透明保持纯黑） */
     private EditText createDarkEditText(String hint, int inputType) {
         EditText et = new EditText(this);
@@ -986,7 +1056,8 @@ public class MainActivity extends Activity {
                         int c;
                         while ((c = in.read(buf)) > 0) fos.write(buf, 0, c);
                     }
-                    String r = execRootCommand("cp " + out.getAbsolutePath() + " " + nativeLibDir + "/" + name
+                    String r = execRootCommand("mkdir -p " + nativeLibDir
+                            + " && cp " + out.getAbsolutePath() + " " + nativeLibDir + "/" + name
                             + " && chmod 755 " + nativeLibDir + "/" + name
                             + " && chcon u:object_r:apk_data_file:s0 " + nativeLibDir + "/" + name
                             + " && echo REPAIR_OK", 30);
@@ -1903,7 +1974,19 @@ public class MainActivity extends Activity {
         // 自检：native 库缺失多为安装时解压失败（部分厂商安装器/流式安装不解压 lib）。
         // 有 root 时自动从 APK 提取并修复（复制 + chcon 回 apk_data_file 域，否则 SELinux 拒绝执行）
         if (!new File(proot).exists()) {
-            if (tryRepairNativeLib(nativeLibDir, getApplicationInfo().sourceDir)) {
+            boolean repaired = tryRepairNativeLib(nativeLibDir, getApplicationInfo().sourceDir);
+            if (!repaired) {
+                // 首次失败多为 KernelSU/Magisk 授权弹窗尚未确认（授权前 su 对应用不可见）。
+                // 等待授权：su 可见后立即重试；若 su 一直不可见（无 root 设备）快速退出，
+                // 避免长时间阻塞启动
+                for (int i = 0; i < 6 && !repaired; i++) {
+                    try { Thread.sleep(6000); } catch (InterruptedException e) { break; }
+                    if (findSuPath() == null) break;   // 无 root，退出重试
+                    Log.d(TAG, "su now visible, retry native lib repair");
+                    repaired = tryRepairNativeLib(nativeLibDir, getApplicationInfo().sourceDir);
+                }
+            }
+            if (repaired) {
                 Log.d(TAG, "native lib auto-repaired, continue start");
                 pushOutput("\r\n[native 库缺失，已通过 root 自动修复，正在启动...]\r\n");
             } else {
