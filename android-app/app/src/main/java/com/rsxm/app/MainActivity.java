@@ -1907,10 +1907,22 @@ public class MainActivity extends Activity {
                 Log.d(TAG, "native lib auto-repaired, continue start");
                 pushOutput("\r\n[native 库缺失，已通过 root 自动修复，正在启动...]\r\n");
             } else {
-                // 无 root：自动引导覆盖安装（系统安装器重装会重新解压 native lib）
-                promptReinstallForNativeLib();
+                // 无 root：首次引导覆盖安装；若已引导过一次仍缺失（如 vivo/iQOO 安装器
+                // 不解压 native lib），不再重复弹窗（防无限循环），给出明确处理指引
+                SharedPreferences p = getSharedPreferences("prefs", MODE_PRIVATE);
+                if (!p.getBoolean("reinstall_prompted", false)) {
+                    p.edit().putBoolean("reinstall_prompted", true).apply();
+                    promptReinstallForNativeLib();
+                } else {
+                    pushOutput("\r\n[native 库缺失：已尝试覆盖安装但未生效（该手机安装器可能不解压 native 库）。\r\n"
+                            + "请用电脑 adb install --no-streaming 安装本 APK，或用有 root 的设备自动修复]\r\n");
+                }
                 return;
             }
+        } else {
+            // 启动正常：清除重装引导标记
+            getSharedPreferences("prefs", MODE_PRIVATE)
+                    .edit().putBoolean("reinstall_prompted", false).apply();
         }
         List<String> cmd = new ArrayList<>();
         cmd.add(proot);
