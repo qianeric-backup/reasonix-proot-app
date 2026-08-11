@@ -77,6 +77,8 @@ public class MainActivity extends Activity {
     private static volatile MainActivity sCurrent;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private volatile boolean environmentStarted = false;
+    /** WebView 页面加载完成标记（onPageFinished 置位，超时未完成则重载页面） */
+    private volatile boolean pageLoaded = false;
     /** 复用环境标记：后台模式开启时 Activity 重建复用运行中的 proot 环境 */
     private volatile boolean reuseEnv = false;
     /** 开发环境安装中标记：防止并发安装互相覆盖 guest 内 .env-done/.env-install.log */
@@ -115,6 +117,10 @@ public class MainActivity extends Activity {
         drawerLayout = findViewById(R.id.drawer_layout);
         tvStatus = findViewById(R.id.tv_status);
         webView = findViewById(R.id.webview);
+        // 二次开启黑屏修复：硬件渲染在部分设备出现 userfaultfd 卡死（logcat:
+        // "userfaultfd: MOVE ioctl seems unsupported: Connection timed out"）导致
+        // onPageFinished 不触发、xterm 不渲染 → 终端黑屏；改软件渲染绕过。
+        webView.setLayerType(View.LAYER_TYPE_SOFTWARE, null);
         WebSettings ws = webView.getSettings();
         ws.setJavaScriptEnabled(true);
         ws.setAllowFileAccess(true);
@@ -126,6 +132,8 @@ public class MainActivity extends Activity {
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public void onPageFinished(WebView view, String url) {
+                Log.d(TAG, "onPageFinished: " + url);
+                pageLoaded = true;
                 // 聚焦 WebView 触发 xterm 渲染，避免启动后需点击才显示 CLI 界面
                 try { view.requestFocus(); } catch (Exception ignored) {}
                 if (reuseEnv) {
@@ -147,6 +155,26 @@ public class MainActivity extends Activity {
             }
         });
         webView.loadUrl("file:///android_asset/web/index.html");
+
+        // onPageFinished 超时重载：userfaultfd 渲染卡死时页面可能一直不完成，4s 后重载恢复
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            if (!pageLoaded && webView != null) {
+                Log.w(TAG, "onPageFinished 超时，重载 index.html");
+                try { webView.reload(); } catch (Exception ignored) {}
+            }
+        }, 4000);
+
+        // 兜底启动：环境启动不依赖 WebView 渲染。二次开启时 WebView 可能因渲染线程
+        // 卡住（logcat: userfaultfd: MOVE ioctl seems unsupported: Connection timed out）
+        // 导致 onPageFinished 不触发 → 环境永不启动 → 终端黑屏。
+        // onPageFinished 正常触发会先启动环境（environmentStarted 置位），此处 4s 后跳过。
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            if (!environmentStarted) {
+                environmentStarted = true;
+                Log.w(TAG, "onPageFinished 未触发（WebView 渲染异常），兜底启动环境");
+                new Thread(MainActivity.this::startEnvironment).start();
+            }
+        }, 4000);
 
         // 标题栏菜单按钮：打开侧滑配置列表
         findViewById(R.id.btn_menu).setOnClickListener(v -> drawerLayout.openDrawer(GravityCompat.START));
@@ -278,8 +306,27 @@ public class MainActivity extends Activity {
         TextView result = createDarkResult();
         result.setText("（测试结果将显示在这里）");
         panel.addView(result);
+
+        // 运行模式切换：proot（默认）/ chroot（root 直入，SELinux 保持 enforcing 下 JVM 亦可用）
+        final boolean chrootNow = isChrootMode();
+        TextView modeTip = createDarkTip(
+                "运行模式：" + (chrootNow ? "chroot（root 直入）" : "proot（默认）") + "\n"
+                        + "chroot 使用 root 直接 chroot 进环境（需 root 授权），SELinux 保持 enforcing 时\n"
+                        + "JVM/安卓开发环境亦正常（proot 模式 enforcing 下不可用）；切换会重启 reasonix 环境。");
+        modeTip.setTextColor(chrootNow ? 0xFF7FDB8A : 0xFFAAAAAA);
+        modeTip.setPadding(0, dp(10), 0, dp(4));
+        panel.addView(modeTip);
+        Button modeBtn = createDarkButton(chrootNow ? "切换回 proot 模式" : "切换为 chroot 模式（实验）");
+        modeBtn.setOnClickListener(v -> {
+            getSharedPreferences("prefs", MODE_PRIVATE).edit()
+                    .putString("run_mode", chrootNow ? "proot" : "chroot").apply();
+            result.setText(chrootNow ? "已切换为 proot 模式，正在重启环境..." : "已切换为 chroot 模式，正在重启环境...");
+            hidePanel();
+            restartEnvironment();
+        });
+        panel.addView(modeBtn);
         // 全屏面板展示（取代系统弹窗，避免遮挡控件）
-        showPanel("Root 权限", panel, null);
+        showPanel("root", panel, null);
         // 检测状态（后台线程）
         new Thread(() -> {
             final String st;
@@ -1899,6 +1946,21 @@ public class MainActivity extends Activity {
                     "do kill -9 $pid 2>/dev/null; done")
                     .redirectErrorStream(true).start();
             if (!p.waitFor(3, TimeUnit.SECONDS)) p.destroy();
+            // chroot 模式：清理 bind mount（su 进程被强杀时脚本内 umount 可能未执行，
+            // 残留挂载会占用 rootfs/dev 等目录，影响下次启动）
+            try {
+                String su = findSuPath();
+                if (su != null) {
+                    File rootfs = new File(new File(getFilesDir(), "rootfs"), "");
+                    String r = rootfs.getAbsolutePath();
+                    Process u = new ProcessBuilder(su, "-c",
+                            "umount " + r + "/dev/pts 2>/dev/null; umount " + r + "/dev 2>/dev/null; "
+                                    + "umount " + r + "/proc 2>/dev/null; umount " + r + "/sys 2>/dev/null")
+                            .redirectErrorStream(true).start();
+                    if (!u.waitFor(3, TimeUnit.SECONDS)) u.destroy();
+                }
+            } catch (Exception ignored) {
+            }
         } catch (Exception e) {
             Log.w(TAG, "kill tree failed", e);
         }
@@ -1958,9 +2020,16 @@ public class MainActivity extends Activity {
     // 环境初始化与 proot 启动（后台线程）
     // ------------------------------------------------------------------
 
+    /** 当前运行模式："chroot"（root 直入）或 "proot"（默认） */
+    private boolean isChrootMode() {
+        return "chroot".equals(getSharedPreferences("prefs", MODE_PRIVATE).getString("run_mode", "proot"));
+    }
+
     private void startEnvironment() {
         Log.d(TAG, "startEnvironment: begin");
-        applySelinuxWorkaround();   // SELinux 适配：JVM/apk 需要 execmem/link 权限（见方法注释）
+        // 注：不自动修改 SELinux（setenforce 0）。SELinux 由系统/用户管理保持 enforcing；
+        // 安卓开发环境（JVM）在 proot 模式 enforcing 下不可用，可用 root 面板切换 chroot 模式
+        // （ksu/root 域，enforcing 下 JVM 正常）。
         try {
             File files = getFilesDir();
             File rootfs = new File(files, "rootfs");
@@ -1975,31 +2044,6 @@ public class MainActivity extends Activity {
         } catch (Exception e) {
             Log.e(TAG, "startEnvironment failed", e);
             pushOutput("\r\n[初始化失败] " + e + "\r\n");
-        }
-    }
-
-    /** SELinux 适配：untrusted_app 默认无 execmem/execmod/link 权限，导致
-     *  JVM(mprotect RWX) 启动失败（"Failed to mark memory page as executable"）
-     *  与 apk 硬链接安装失败（avc denied { link }）。
-     *  KernelSU/Magisk root 下 setenforce 0 后两者均恢复正常；无 root 时静默跳过。
-     *  重启后 SELinux 恢复 enforcing，故每次环境启动时执行。 */
-    private void applySelinuxWorkaround() {
-        try {
-            String su = findSuPath();
-            if (su == null) return;
-            Process p = new ProcessBuilder(su, "-c", "setenforce 0 2>/dev/null; getenforce")
-                    .redirectErrorStream(true).start();
-            if (p.waitFor(5, TimeUnit.SECONDS)) {
-                byte[] out = new byte[128];
-                int n = p.getInputStream().read(out);
-                String s = n > 0 ? new String(out, 0, n, StandardCharsets.UTF_8).trim() : "";
-                Log.d(TAG, "SELinux workaround: " + s);
-            } else {
-                p.destroy();
-                Log.w(TAG, "setenforce timeout");
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "setenforce failed: " + e);
         }
     }
 
@@ -2220,6 +2264,18 @@ public class MainActivity extends Activity {
             Log.d(TAG, "proot already running, skip start");
             return;
         }
+        // chroot 模式：root 直接 chroot 进 rootfs（无 ptrace/seccomp 层，进程为 ksu(root) 域，
+        // enforcing 下 JVM/apk 均正常，无需 setenforce 0）。无 root 时回退 proot。
+        if (isChrootMode()) {
+            String su = findSuPath();
+            if (su == null) {
+                Log.w(TAG, "chroot requires root, fallback to proot");
+                getSharedPreferences("prefs", MODE_PRIVATE).edit().putString("run_mode", "proot").apply();
+            } else {
+                startChroot(su, rootfs);
+                return;
+            }
+        }
         // SELinux 只允许 app 执行 APK native libs 目录（apk_data_file）里的 ELF，
         // 因此 proot、libtalloc、libandroid-shmem、loader 全部打包在 jniLibs，
         // 经 useLegacyPackaging 解压到 nativeLibraryDir 后从这里直接执行。
@@ -2297,9 +2353,39 @@ public class MainActivity extends Activity {
         sProotProcess = pb.start();
         sProcIn = sProotProcess.getOutputStream();
         startRootPolling();   // 启动 root 命令桥轮询（guest root <cmd> → app su 执行）
+        startEnvReader(sProotProcess);
+    }
 
+    /**
+     * chroot 模式启动：su(root) 直接 chroot 进 rootfs。
+     * 绑定宿主 /dev（ptmx 保留宿主 SELinux 类型）+ 挂 devpts（pty 终端）+ proc/sys，
+     * chroot 运行 pty-bridge → entry.sh，退出后清理挂载。
+     * chroot 进程为 ksu(root) 域：JVM(mprotect RWX)/apk(link) 在 enforcing 下均可，
+     * 保持 SELinux 开启（无需 setenforce 0）。
+     */
+    private void startChroot(String su, File rootfs) throws IOException {
+        String r = rootfs.getAbsolutePath();
+        String script = "mkdir -p " + r + "/dev/pts " + r + "/proc " + r + "/sys; "
+                + "mount --bind /dev " + r + "/dev 2>/dev/null; "
+                + "mount -t devpts -o gid=5,mode=620 devpts " + r + "/dev/pts 2>/dev/null; "
+                + "mount --bind /proc " + r + "/proc 2>/dev/null; "
+                + "mount --bind /sys " + r + "/sys 2>/dev/null; "
+                + "chroot " + r + " /usr/bin/pty-bridge /bin/sh /root/entry.sh; RC=$?; "
+                + "umount " + r + "/dev/pts 2>/dev/null; umount " + r + "/dev 2>/dev/null; "
+                + "umount " + r + "/proc 2>/dev/null; umount " + r + "/sys 2>/dev/null; exit $RC";
+        ProcessBuilder pb = new ProcessBuilder(su, "-c", script);
+        pb.redirectErrorStream(true);
+        pb.environment().put("RSXM_CHROOT", "1");
+        Log.d(TAG, "chroot started via " + su);
+        sProotProcess = pb.start();
+        sProcIn = sProotProcess.getOutputStream();
+        startRootPolling();
+        startEnvReader(sProotProcess);
+    }
+
+    /** 启动环境输出 reader：把进程 stdout 转发到终端（proot/chroot 共用） */
+    private void startEnvReader(Process p) {
         // reader 绑定启动时刻的进程（局部捕获），避免重启环境后读到新进程的流
-        final Process p = sProotProcess;
         Thread reader = new Thread(() -> {
             try (InputStream in = p.getInputStream()) {
                 byte[] buf = new byte[8192];
@@ -2314,7 +2400,7 @@ public class MainActivity extends Activity {
             if (sProotProcess == p) {
                 pushOutput("\r\n[Linux 环境已退出]\r\n");
             }
-        }, "proot-reader");
+        }, "env-reader");
         reader.setDaemon(true);
         reader.start();
     }
