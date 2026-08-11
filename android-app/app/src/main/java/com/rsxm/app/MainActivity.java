@@ -11,6 +11,7 @@ import android.provider.OpenableColumns;
 import android.content.SharedPreferences;
 import android.net.Uri;
 import android.os.Build;
+import android.view.WindowManager;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.Settings;
@@ -41,6 +42,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.FileInputStream;
 import java.io.OutputStream;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.net.URL;
@@ -70,6 +73,7 @@ public class MainActivity extends Activity {
 
     private static final String TAG = "ReasonixProot";
     private static final int REQ_UPDATE_RESONIX = 200;
+    private static final int REQ_SKILL_IMPORT = 201;
     /** 官方更新源：@reasonix/cli-linux-arm64（npm 平台二进制包，npmmirror 国内镜像） */
     private static final String REASONIX_DEFAULT_URL =
             "https://registry.npmmirror.com/@reasonix/cli-linux-arm64/-/cli-linux-arm64-1.21.1.tgz";
@@ -466,6 +470,9 @@ public class MainActivity extends Activity {
         holder.addView(content, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         panelOnClose = onClose;
+        // 面板内键盘弹出不压缩布局/不自动滚动（adjustPan：窗口整体平移保持输入框可见，
+        // 面板外层 ScrollView 不会因键盘把内容超高而自动滑动）；退出面板恢复终端 adjustResize。
+        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN);
         findViewById(R.id.panel_overlay).setVisibility(View.VISIBLE);
     }
 
@@ -474,6 +481,7 @@ public class MainActivity extends Activity {
         if (findViewById(R.id.panel_overlay).getVisibility() != View.VISIBLE) return;
         findViewById(R.id.panel_overlay).setVisibility(View.GONE);
         ((ViewGroup) findViewById(R.id.panel_content)).removeAllViews();
+        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         Runnable cb = panelOnClose;
         panelOnClose = null;
         if (cb != null) cb.run();
@@ -598,24 +606,40 @@ public class MainActivity extends Activity {
                 "SKILL 为 reasonix 技能包（SKILL.md），可新增/查找/启用禁用/删除。\n"
                         + "格式：开头 YAML frontmatter，含 name 和 description。"));
         // ---- 新增区 ----
-        final EditText nameInput = createDarkEditText("SKILL 名称（如 mytool，仅字母数字._-）",
+        skillNameInput = createDarkEditText("SKILL 名称（如 mytool，仅字母数字._-）",
                 InputType.TYPE_CLASS_TEXT);
-        panel.addView(nameInput);
-        final EditText contentInput = new EditText(this);
-        contentInput.setHint("SKILL.md 内容（粘贴，含 frontmatter）");
-        contentInput.setTextColor(0xFFE0E0E0);
-        contentInput.setHintTextColor(0xFF666666);
-        contentInput.setTextSize(13);
-        contentInput.setGravity(android.view.Gravity.TOP);
-        contentInput.setSingleLine(false);
-        contentInput.setMinLines(8);
-        contentInput.setBackgroundColor(0xFF1A1A1A);
-        contentInput.setPadding(dp(10), dp(10), dp(10), dp(10));
-        panel.addView(contentInput);
+        panel.addView(skillNameInput);
+        skillContentInput = new EditText(this);
+        skillContentInput.setHint("SKILL.md 内容（粘贴/导入，含 frontmatter）");
+        skillContentInput.setTextColor(0xFFE0E0E0);
+        skillContentInput.setHintTextColor(0xFF666666);
+        skillContentInput.setTextSize(13);
+        skillContentInput.setGravity(android.view.Gravity.TOP);
+        skillContentInput.setSingleLine(false);
+        skillContentInput.setMaxLines(Integer.MAX_VALUE);
+        skillContentInput.setVerticalScrollBarEnabled(true);
+        skillContentInput.setMovementMethod(new android.text.method.ScrollingMovementMethod());
+        skillContentInput.setBackgroundColor(0xFF1A1A1A);
+        skillContentInput.setPadding(dp(10), dp(10), dp(10), dp(10));
+        // 固定高度 + 内部滚动（二级滑动）：导入/粘贴大内容时内容区自己滚，不撑动整个功能页
+        panel.addView(skillContentInput, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(160)));
+        Button importBtn = createDarkButton("从手机文件导入 SKILL.md");
+        importBtn.setOnClickListener(v -> {
+            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            i.addCategory(Intent.CATEGORY_OPENABLE);
+            i.setType("text/*");
+            try {
+                startActivityForResult(i, REQ_SKILL_IMPORT);
+            } catch (Exception e) {
+                pushOutput("\r\n[无法打开文件选择器: " + e.getMessage() + "]\r\n");
+            }
+        });
+        panel.addView(importBtn);
         Button installBtn = createDarkButton("安装 SKILL");
         installBtn.setOnClickListener(v -> {
-            String name = nameInput.getText().toString().trim();
-            String content = contentInput.getText().toString();
+            String name = skillNameInput.getText().toString().trim();
+            String content = skillContentInput.getText().toString();
             if (name.isEmpty() || content.isEmpty()) {
                 pushOutput("\r\n[请填写 SKILL 名称和内容]\r\n");
                 return;
@@ -625,7 +649,7 @@ public class MainActivity extends Activity {
                 return;
             }
             installSkill(name, content);
-            v.postDelayed(skillRefreshRunnable, 1500);   // 安装后刷新列表
+            // 列表刷新由 installSkill 完成回调触发（不再固定延时，避免与安装命令并发抢占 .adb-cmd/.adb-out）
         });
         panel.addView(installBtn);
         // ---- 查找区 ----
@@ -654,35 +678,84 @@ public class MainActivity extends Activity {
     /** SKILL 列表刷新任务（安装/删除/开关后调用；面板持有当前 listBox/filter） */
     private Runnable skillRefreshRunnable;
 
+    /** SKILL 面板输入框引用（文件导入回调填充用；面板每次重建时重新赋值） */
+    private EditText skillNameInput, skillContentInput;
+
+    /** 当前项目路径：宿主侧读 /root/.rsxm-project 标记（与项目面板一致），无标记为默认 /root */
+    private String currentProjectPath() {
+        try {
+            File rootDir = new File(new File(getFilesDir(), "rootfs"), "root");
+            File mark = new File(rootDir, ".rsxm-project");
+            if (mark.exists()) {
+                String s = new String(java.nio.file.Files.readAllBytes(mark.toPath()),
+                        StandardCharsets.UTF_8).trim();
+                if (!s.isEmpty()) return s;
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "read project mark failed", e);
+        }
+        return "/root";
+    }
+
+    /** 当前项目 skills 目录的宿主侧路径；仅手机目录项目（/sdcard/...）适用，内部项目返回 null
+     *  （reasonix 工作区在手机目录时，guest 内写 /sdcard 依赖 proot/chroot 绑定且可能被隔离，
+     *   与项目创建/删除/列表一致，手机目录一律走宿主 File API 读写真存储） */
+    private File hostSkillsDir(String project) {
+        if (!project.startsWith("/sdcard/")) return null;
+        return new File(project.replace("/sdcard", "/storage/emulated/0"), ".reasonix/skills");
+    }
+
+    /** 解析 guest 读出的 disabled_skills 行（形如 disabled_skills = ["a", "b"]） */
+    private void parseDisabled(String cfg, java.util.Set<String> disabled) {
+        if (cfg == null) return;
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\[([^\\]]*)\\]").matcher(cfg);
+        if (m.find()) {
+            for (String x : m.group(1).split(",")) {
+                String n = x.trim().replace("\"", "").replace("'", "");
+                if (!n.isEmpty()) disabled.add(n);
+            }
+        }
+    }
+
     /** 异步加载已装 SKILL 列表与启用状态，渲染到容器（支持名称过滤） */
     private void loadSkillList(LinearLayout container, String filter) {
         container.removeAllViews();
         container.addView(createDarkTip("加载列表中..."));
         new Thread(() -> {
             try {
-                String out = executeInGuest(
-                        "SK=$(cat $HOME/.rsxm-project 2>/dev/null); [ -n \"$SK\" ] || SK=$HOME; SK=\"$SK/.reasonix/skills\"; "
-                                + "ls \"$SK\" 2>/dev/null; echo ===DISABLED===; "
-                                + "grep -A8 '\\[skills\\]' $HOME/.reasonix/config.toml 2>/dev/null | grep disabled_skills", 10);
+                final String project = currentProjectPath();
                 final List<String> names = new ArrayList<>();
                 final java.util.Set<String> disabled = new java.util.HashSet<>();
-                if (out != null) {
-                    String[] parts = out.split("===DISABLED===");
-                    if (parts.length > 0 && parts[0].trim() != null) {
-                        for (String l : parts[0].split("\n")) {
-                            String t = l.trim();
-                            if (t.isEmpty() || t.contains("error")) continue;
-                            names.add(t.replace("/", ""));
+                File host = hostSkillsDir(project);
+                if (host != null) {
+                    // 手机目录项目：宿主侧列目录（与安装/删除一致，不依赖 guest /sdcard 绑定）
+                    File[] dirs = host.listFiles();
+                    if (dirs != null) {
+                        for (File d : dirs) {
+                            String n = d.getName();
+                            if (d.isDirectory() && !n.startsWith(".")) names.add(n);
                         }
                     }
-                    if (parts.length > 1) {
-                        java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\[([^\\]]*)\\]").matcher(parts[1]);
-                        if (m.find()) {
-                            for (String x : m.group(1).split(",")) {
-                                String n = x.trim().replace("\"", "").replace("'", "");
-                                if (!n.isEmpty()) disabled.add(n);
+                    // disabled 状态：config.toml 在 /root/.reasonix/（全局），仍经 guest 读
+                    parseDisabled(executeInGuest(
+                            "grep -A8 '\\[skills\\]' $HOME/.reasonix/config.toml 2>/dev/null | grep disabled_skills", 10),
+                            disabled);
+                } else {
+                    String out = executeInGuest(
+                            "SK=\"" + project + "/.reasonix/skills\"; "
+                                    + "ls \"$SK\" 2>/dev/null; echo ===DISABLED===; "
+                                    + "grep -A8 '\\[skills\\]' $HOME/.reasonix/config.toml 2>/dev/null | grep disabled_skills", 10);
+                    if (out != null) {
+                        String[] parts = out.split("===DISABLED===");
+                        if (parts.length > 0) {
+                            for (String l : parts[0].split("\n")) {
+                                String t = l.trim();
+                                if (t.isEmpty() || t.contains("error")
+                                        || (t.startsWith("(") && t.endsWith(")"))) continue;   // 过滤超时/失败提示
+                                names.add(t.replace("/", ""));
                             }
                         }
+                        if (parts.length > 1) parseDisabled(parts[1], disabled);
                     }
                 }
                 runOnUiThread(() -> renderSkillList(container, names, disabled, filter));
@@ -722,8 +795,7 @@ public class MainActivity extends Activity {
             row.addView(cb);
             Button del = createDarkButton("删除");
             del.setOnClickListener(v -> {
-                uninstallSkill(name);
-                v.postDelayed(skillRefreshRunnable, 1500);
+                uninstallSkill(name);   // 列表刷新由 uninstallSkill 完成回调触发
             });
             row.addView(del);
             container.addView(row);
@@ -774,18 +846,33 @@ public class MainActivity extends Activity {
         }, "skill-toggle").start();
     }
 
-    /** 卸载 SKILL：删除当前项目 .reasonix/skills/<name> 目录 */
+    /** 卸载 SKILL：删除当前项目 .reasonix/skills/<name> 目录（手机目录项目走宿主侧，与项目删除一致） */
     private void uninstallSkill(String name) {
         new Thread(() -> {
             try {
-                String out = executeInGuest(
-                        "SK=$(cat $HOME/.rsxm-project 2>/dev/null); [ -n \"$SK\" ] || SK=$HOME; SK=\"$SK/.reasonix/skills\"; "
-                                + "rm -rf \"$SK/" + name + "\" && echo UNINSTALLED_OK && ls \"$SK\" 2>&1", 10);
+                final String project = currentProjectPath();
+                String out;
+                File host = hostSkillsDir(project);
+                if (host != null) {
+                    boolean ok = deleteRecursive(new File(host, name));
+                    StringBuilder sb = new StringBuilder(ok ? "UNINSTALLED_OK" : "(宿主删除失败)");
+                    File[] left = host.listFiles();
+                    if (left != null) {
+                        for (File f : left) {
+                            if (f.isDirectory() && !f.getName().startsWith(".")) sb.append('\n').append(f.getName());
+                        }
+                    }
+                    out = sb.toString();
+                } else {
+                    out = executeInGuest("SK=\"" + project + "/.reasonix/skills\"; "
+                            + "rm -rf \"$SK/" + name + "\" && echo UNINSTALLED_OK && ls \"$SK\" 2>&1", 10);
+                }
                 String msg = "\r\n[卸载 SKILL: " + name + "]\r\n"
                         + ((out != null && out.contains("UNINSTALLED_OK"))
                             ? "已删除。剩余 SKILL：\n" + out.replace("UNINSTALLED_OK", "").trim()
                             : (out == null ? "(无响应)" : out)) + "\r\n";
                 runOnUiThread(() -> pushOutput(msg));
+                runOnUiThread(() -> { if (skillRefreshRunnable != null) skillRefreshRunnable.run(); });
             } catch (Exception e) {
                 Log.e(TAG, "uninstall skill failed", e);
                 runOnUiThread(() -> pushOutput("\r\n[卸载 SKILL 失败: " + e.getMessage() + "]\r\n"));
@@ -793,27 +880,104 @@ public class MainActivity extends Activity {
         }, "skill-uninstall").start();
     }
 
-    /** 安装 SKILL 文件：内容 base64 编码后经 guest 服务循环写入（避免转义/引号问题） */
+    /** 内部项目：经 guest 服务循环写入 SKILL（base64 避免转义/引号问题） */
+    private String guestInstallSkill(String name, String content, String project) {
+        String b64 = android.util.Base64.encodeToString(
+                content.getBytes(StandardCharsets.UTF_8), android.util.Base64.NO_WRAP);
+        String cmd = "SK=\"" + project + "/.reasonix/skills\"; "
+                + "mkdir -p \"$SK/" + name + "\""
+                + " && echo " + b64 + " | base64 -d > \"$SK/" + name + "/SKILL.md\""
+                + " && chmod 644 \"$SK/" + name + "/SKILL.md\""
+                + " && echo INSTALLED_OK && ls -la \"$SK/" + name + "/SKILL.md\"";
+        return executeInGuest(cmd, 12);
+    }
+
+    /** 安装 SKILL 文件：内容 base64 编码后经 guest 服务循环写入（避免转义/引号问题）。
+     *  手机目录项目走宿主侧写真存储（guest 内写 /sdcard 依赖绑定、可能被 mount namespace
+     *  隔离导致宿主/重启后不可见——与项目创建/删除/列表一致的处理方式）；宿主写入失败时
+     *  回退 guest 命令。完成后回调刷新列表。 */
     private void installSkill(String name, String content) {
         new Thread(() -> {
             try {
-                String b64 = android.util.Base64.encodeToString(
-                        content.getBytes(StandardCharsets.UTF_8), android.util.Base64.NO_WRAP);
-                String cmd = "SK=$(cat $HOME/.rsxm-project 2>/dev/null); [ -n \"$SK\" ] || SK=$HOME; SK=\"$SK/.reasonix/skills\"; "
-                        + "mkdir -p \"$SK/" + name + "\""
-                        + " && echo " + b64 + " | base64 -d > \"$SK/" + name + "/SKILL.md\""
-                        + " && chmod 644 \"$SK/" + name + "/SKILL.md\""
-                        + " && echo INSTALLED_OK && ls -la \"$SK/" + name + "/SKILL.md\"";
-                String out = executeInGuest(cmd, 12);
+                final String project = currentProjectPath();
+                String out;
+                File host = hostSkillsDir(project);
+                if (host != null) {
+                    File dir = new File(host, name);
+                    try {
+                        if (dir.mkdirs() || dir.isDirectory()) {
+                            java.nio.file.Files.write(new File(dir, "SKILL.md").toPath(),
+                                    content.getBytes(StandardCharsets.UTF_8));
+                            out = "INSTALLED_OK\n" + new File(dir, "SKILL.md").getAbsolutePath();
+                        } else {
+                            out = guestInstallSkill(name, content, project);   // 宿主创建失败回退
+                        }
+                    } catch (Exception e2) {
+                        Log.w(TAG, "host skill write failed, fallback guest", e2);
+                        out = guestInstallSkill(name, content, project);
+                    }
+                } else {
+                    out = guestInstallSkill(name, content, project);
+                }
                 String msg = "\r\n[安装 SKILL: " + name + "]\r\n"
                         + (out == null ? "(无响应)" : out)
                         + "\r\n[完成。reasonix 内 /skills reload 或重启应用环境后显示]\r\n";
                 runOnUiThread(() -> pushOutput(msg));
+                runOnUiThread(() -> { if (skillRefreshRunnable != null) skillRefreshRunnable.run(); });
             } catch (Exception e) {
                 Log.e(TAG, "install skill failed", e);
                 runOnUiThread(() -> pushOutput("\r\n[安装 SKILL 失败: " + e.getMessage() + "]\r\n"));
             }
         }, "skill-install").start();
+    }
+
+    /** 解析 SKILL.md frontmatter 中的 name（开头 --- 到下一个 --- 之间的 name: 行），无则返回 null */
+    private String parseSkillName(String content) {
+        if (content == null) return null;
+        String c = content.trim();
+        if (!c.startsWith("---")) return null;
+        int end = c.indexOf("\n---", 3);
+        if (end < 0) return null;
+        String fm = c.substring(3, end);
+        for (String l : fm.split("\n")) {
+            String t = l.trim();
+            if (t.startsWith("name:")) {
+                String n = t.substring(5).trim().replace("\"", "").replace("'", "").trim();
+                if (!n.isEmpty()) return n;
+            }
+        }
+        return null;
+    }
+
+    /** 从手机文件导入 SKILL.md（SAF 免存储权限）：读取内容 → 解析 frontmatter name →
+     *  填入表单（名称+内容）由用户确认，安装仍由「安装 SKILL」按钮触发 */
+    private void importSkillFromUri(Uri uri) {
+        new Thread(() -> {
+            try {
+                String content;
+                try (InputStream is = getContentResolver().openInputStream(uri);
+                     BufferedReader r = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
+                    StringBuilder sb = new StringBuilder();
+                    String line;
+                    while ((line = r.readLine()) != null) sb.append(line).append('\n');
+                    content = sb.toString();
+                }
+                if (content == null || content.trim().isEmpty()) {
+                    runOnUiThread(() -> pushOutput("\r\n[导入失败: 文件为空]\r\n"));
+                    return;
+                }
+                final String name = parseSkillName(content);
+                final String finalContent = content;
+                runOnUiThread(() -> {
+                    if (skillNameInput != null) skillNameInput.setText(name == null ? "" : name);
+                    if (skillContentInput != null) skillContentInput.setText(finalContent);
+                    pushOutput("\r\n[已导入" + (name != null ? " " + name : "") + "，检查后点「安装 SKILL」完成安装]\r\n");
+                });
+            } catch (Exception e) {
+                Log.e(TAG, "import skill failed", e);
+                runOnUiThread(() -> pushOutput("\r\n[导入 SKILL 文件失败: " + e.getMessage() + "]\r\n"));
+            }
+        }, "skill-import").start();
     }
 
     /* ==================== 项目位置 ==================== */
@@ -1804,32 +1968,37 @@ public class MainActivity extends Activity {
         }, "adb-exec").start();
     }
 
-    /** 写入命令到 guest adb 服务并轮询结果（.adb-cmd → 执行 → .adb-out 含 __DONE__ 标记） */
+    /** 写入命令到 guest adb 服务并轮询结果（.adb-cmd → 执行 → .adb-out 含 __DONE__ 标记）。
+     *  全程持有 adbCmdLock 串行执行：多条并发命令共用同一个 .adb-cmd/.adb-out 文件，
+     *  并发写入会互相覆盖导致命令丢失/读到错误输出（如安装 SKILL 后立刻刷新列表）。 */
+    private final Object adbCmdLock = new Object();
     private String executeInGuest(String cmd, int timeoutSec) {
-        try {
-            File root = new File(new File(getFilesDir(), "rootfs"), "root");
-            File cmdFile = new File(root, ".adb-cmd");
-            File outFile = new File(root, ".adb-out");
-            outFile.delete();
-            java.nio.file.Files.write(cmdFile.toPath(), cmd.getBytes(StandardCharsets.UTF_8));
-            long deadline = System.currentTimeMillis() + timeoutSec * 1000L;
-            while (System.currentTimeMillis() < deadline) {
-                Thread.sleep(300);
-                if (outFile.exists()) {
-                    String out = new String(java.nio.file.Files.readAllBytes(outFile.toPath()),
-                            StandardCharsets.UTF_8);
-                    if (out.contains("__DONE__")) {
-                        outFile.delete();
-                        String r = out.replace("__DONE__", "").trim();
-                        Log.d(TAG, "adb out: " + r);
-                        return r.isEmpty() ? "(无输出)" : r;
+        synchronized (adbCmdLock) {
+            try {
+                File root = new File(new File(getFilesDir(), "rootfs"), "root");
+                File cmdFile = new File(root, ".adb-cmd");
+                File outFile = new File(root, ".adb-out");
+                outFile.delete();
+                java.nio.file.Files.write(cmdFile.toPath(), cmd.getBytes(StandardCharsets.UTF_8));
+                long deadline = System.currentTimeMillis() + timeoutSec * 1000L;
+                while (System.currentTimeMillis() < deadline) {
+                    Thread.sleep(300);
+                    if (outFile.exists()) {
+                        String out = new String(java.nio.file.Files.readAllBytes(outFile.toPath()),
+                                StandardCharsets.UTF_8);
+                        if (out.contains("__DONE__")) {
+                            outFile.delete();
+                            String r = out.replace("__DONE__", "").trim();
+                            Log.d(TAG, "adb out: " + r);
+                            return r.isEmpty() ? "(无输出)" : r;
+                        }
                     }
                 }
+                return "(执行超时 " + timeoutSec + " 秒)";
+            } catch (Exception e) {
+                Log.w(TAG, "executeInGuest failed", e);
+                return "(执行失败: " + e + ")";
             }
-            return "(执行超时 " + timeoutSec + " 秒)";
-        } catch (Exception e) {
-            Log.w(TAG, "executeInGuest failed", e);
-            return "(执行失败: " + e + ")";
         }
     }
 
@@ -2205,6 +2374,8 @@ public class MainActivity extends Activity {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == REQ_UPDATE_RESONIX && resultCode == RESULT_OK && data != null && data.getData() != null) {
             applyReasonixUpdate(data.getData());
+        } else if (requestCode == REQ_SKILL_IMPORT && resultCode == RESULT_OK && data != null && data.getData() != null) {
+            importSkillFromUri(data.getData());
         }
     }
 
