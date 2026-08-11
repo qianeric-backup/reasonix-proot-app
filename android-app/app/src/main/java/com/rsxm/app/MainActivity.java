@@ -17,6 +17,9 @@ import android.provider.Settings;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.InputType;
+import android.text.Editable;
+import android.text.TextWatcher;
+import android.widget.CheckBox;
 import android.util.Base64;
 import android.util.Log;
 import android.view.View;
@@ -596,9 +599,10 @@ public class MainActivity extends Activity {
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(dp(16), dp(8), dp(16), 0);
         panel.addView(createDarkTip(
-                "SKILL 是 reasonix 的 AI 技能包（SKILL.md 格式），安装后 reasonix 启动自动加载，"
-                        + "对话里可用 /skill enable <名称> 启用；不需要时可在此卸载。\n"
+                "SKILL 是 reasonix 的 AI 技能包（SKILL.md 格式），安装后自动加载；\n"
+                        + "可在此新增、查找、启用/禁用、删除。禁用后从 reasonix 隐藏（[skills].disabled_skills）。\n"
                         + "格式要求：开头必须有 YAML frontmatter，含 name 和 description 两行。"));
+        // ---- 新增区 ----
         final EditText nameInput = createDarkEditText("SKILL 名称（如 mytool，仅字母数字._-）",
                 InputType.TYPE_CLASS_TEXT);
         panel.addView(nameInput);
@@ -626,39 +630,149 @@ public class MainActivity extends Activity {
                 return;
             }
             installSkill(name, content);
+            v.postDelayed(skillRefreshRunnable, 1500);   // 安装后刷新列表
         });
         panel.addView(installBtn);
-        Button listBtn = createDarkButton("查看已安装");
-        listBtn.setOnClickListener(v -> new Thread(() -> {
+        // ---- 查找区 ----
+        final EditText searchInput = createDarkEditText("查找 SKILL（输入名称关键字过滤）",
+                InputType.TYPE_CLASS_TEXT);
+        panel.addView(searchInput);
+        // ---- 已装列表区 ----
+        final LinearLayout listBox = new LinearLayout(this);
+        listBox.setOrientation(LinearLayout.VERTICAL);
+        panel.addView(listBox);
+        panel.addView(createDarkTip("说明：勾选 = 启用（reasonix 可加载）；取消勾选 = 禁用（从 reasonix 隐藏）。"));
+        // 刷新/查找联动
+        skillRefreshRunnable = () -> loadSkillList(listBox, searchInput.getText().toString().trim());
+        searchInput.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) { skillRefreshRunnable.run(); }
+            @Override public void afterTextChanged(Editable s) {}
+        });
+        skillRefreshRunnable.run();   // 初始加载列表
+        showPanel("SKILL 功能", panel, null);
+    }
+
+    /** SKILL 列表刷新任务（安装/删除/开关后调用；面板持有当前 listBox/filter） */
+    private Runnable skillRefreshRunnable;
+
+    /** 异步加载已装 SKILL 列表与启用状态，渲染到容器（支持名称过滤） */
+    private void loadSkillList(LinearLayout container, String filter) {
+        container.removeAllViews();
+        container.addView(createDarkTip("加载列表中..."));
+        new Thread(() -> {
             try {
                 String out = executeInGuest(
-                        "ls ~/.reasonix/skills 2>&1; echo ---; ls ~/.reasonix/skills/*/SKILL.md 2>&1", 12);
-                String msg = "\r\n[已安装 SKILL]\r\n" + (out == null ? "(无输出)" : out) + "\r\n";
-                runOnUiThread(() -> pushOutput(msg));
+                        "ls ~/.reasonix/skills/ 2>/dev/null; echo ===DISABLED===; "
+                                + "grep -A8 '\\[skills\\]' ~/.reasonix/config.toml 2>/dev/null | grep disabled_skills", 10);
+                final List<String> names = new ArrayList<>();
+                final java.util.Set<String> disabled = new java.util.HashSet<>();
+                if (out != null) {
+                    String[] parts = out.split("===DISABLED===");
+                    if (parts.length > 0 && parts[0].trim() != null) {
+                        for (String l : parts[0].split("\n")) {
+                            String t = l.trim();
+                            if (t.isEmpty() || t.contains("error")) continue;
+                            names.add(t.replace("/", ""));
+                        }
+                    }
+                    if (parts.length > 1) {
+                        java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\[([^\\]]*)\\]").matcher(parts[1]);
+                        if (m.find()) {
+                            for (String x : m.group(1).split(",")) {
+                                String n = x.trim().replace("\"", "").replace("'", "");
+                                if (!n.isEmpty()) disabled.add(n);
+                            }
+                        }
+                    }
+                }
+                runOnUiThread(() -> renderSkillList(container, names, disabled, filter));
             } catch (Exception e) {
-                Log.e(TAG, "list skills failed", e);
+                Log.e(TAG, "load skills failed", e);
+                runOnUiThread(() -> {
+                    container.removeAllViews();
+                    container.addView(createDarkTip("（加载失败：" + e.getMessage() + "）"));
+                });
             }
-        }, "skill-list").start());
-        panel.addView(listBtn);
-        panel.addView(createDarkTip("卸载：填写要删除的 SKILL 名称后点「卸载 SKILL」"));
-        final EditText uninstallInput = createDarkEditText("卸载 SKILL 名称（如 mytool）",
-                InputType.TYPE_CLASS_TEXT);
-        panel.addView(uninstallInput);
-        Button uninstallBtn = createDarkButton("卸载 SKILL");
-        uninstallBtn.setOnClickListener(v -> {
-            String name = uninstallInput.getText().toString().trim();
-            if (name.isEmpty()) {
-                pushOutput("\r\n[请输入要卸载的 SKILL 名称]\r\n");
-                return;
+        }, "skill-load").start();
+    }
+
+    /** 渲染 SKILL 列表（每行：名称 + 启用勾选 + 删除） */
+    private void renderSkillList(LinearLayout container, List<String> names,
+                                 java.util.Set<String> disabled, String filter) {
+        container.removeAllViews();
+        boolean has = false;
+        for (final String name : names) {
+            if (filter != null && !filter.isEmpty() && !name.contains(filter)) continue;
+            has = true;
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+            row.setPadding(0, dp(6), 0, dp(6));
+            TextView tv = new TextView(this);
+            tv.setText(name);
+            tv.setTextColor(0xFFE0E0E0);
+            tv.setTextSize(14);
+            tv.setTypeface(null, android.graphics.Typeface.BOLD);
+            row.addView(tv, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            CheckBox cb = new CheckBox(this);
+            cb.setChecked(!disabled.contains(name));
+            cb.setText("启用");
+            cb.setTextColor(0xFFAAAAAA);
+            cb.setOnCheckedChangeListener((b, checked) -> setSkillEnabled(name, checked));
+            row.addView(cb);
+            Button del = createDarkButton("删除");
+            del.setOnClickListener(v -> {
+                uninstallSkill(name);
+                v.postDelayed(skillRefreshRunnable, 1500);
+            });
+            row.addView(del);
+            container.addView(row);
+        }
+        if (!has) container.addView(createDarkTip("（无匹配的已安装 SKILL）"));
+    }
+
+    /** 启用/禁用 SKILL：修改 guest 内 ~/.reasonix/config.toml 的 [skills] disabled_skills */
+    private void setSkillEnabled(String name, boolean enable) {
+        new Thread(() -> {
+            try {
+                String script = "import os, sys\n"
+                        + "p = '/root/.reasonix/config.toml'\n"
+                        + "name = sys.argv[1]\n"
+                        + "disable = sys.argv[2] == '1'\n"
+                        + "content = open(p).read() if os.path.exists(p) else ''\n"
+                        + "lines = content.split('\\n')\n"
+                        + "out = []\n"
+                        + "found = False\n"
+                        + "for l in lines:\n"
+                        + "    if 'disabled_skills' in l and '[' in l:\n"
+                        + "        found = True\n"
+                        + "        arr = l[l.index('[')+1:l.rindex(']')]\n"
+                        + "        names = [x.strip().strip('\\\"\\'').strip() for x in arr.split(',') if x.strip()]\n"
+                        + "        if disable and name not in names: names.append(name)\n"
+                        + "        if (not disable) and name in names: names.remove(name)\n"
+                        + "        l = 'disabled_skills = [' + ', '.join('\\\"%s\\\"' % n for n in names) + ']'\n"
+                        + "    out.append(l)\n"
+                        + "if not found:\n"
+                        + "    if '[skills]' in content:\n"
+                        + "        idx = next(i for i,l in enumerate(out) if l.strip() == '[skills]')\n"
+                        + "        j = idx + 1\n"
+                        + "        while j < len(out) and not out[j].strip().startswith('['): j += 1\n"
+                        + "        out.insert(j, 'disabled_skills = [' + ('\\\"%s\\\"' % name) + ']' if disable else 'disabled_skills = []')\n"
+                        + "    else:\n"
+                        + "        out += ['', '[skills]', 'disabled_skills = [' + ('\\\"%s\\\"' % name) + ']' if disable else 'disabled_skills = []']\n"
+                        + "open(p, 'w').write('\\n'.join(out))\n"
+                        + "print('OK ' + name + (' disabled' if disable else ' enabled'))\n";
+                String b64 = Base64.encodeToString(script.getBytes("UTF-8"), Base64.NO_WRAP);
+                String out = executeInGuest("echo " + b64 + " | base64 -d > /tmp/skill_toggle.py; "
+                        + "python3 /tmp/skill_toggle.py " + name + " " + (enable ? "0" : "1"), 10);
+                runOnUiThread(() -> pushOutput("\r\n[SKILL " + name + (enable ? " 已启用" : " 已禁用") + "]"
+                        + (out == null ? "" : "\n" + out) + "\r\n"));
+            } catch (Exception e) {
+                Log.e(TAG, "set skill enabled failed", e);
+                runOnUiThread(() -> pushOutput("\r\n[切换 SKILL 启用状态失败: " + e.getMessage() + "]\r\n"));
             }
-            if (!name.matches("[A-Za-z0-9_.-]+")) {
-                pushOutput("\r\n[SKILL 名称仅允许字母、数字、_ . -]\r\n");
-                return;
-            }
-            uninstallSkill(name);
-        });
-        panel.addView(uninstallBtn);
-        showPanel("skill功能", panel, null);
+        }, "skill-toggle").start();
     }
 
     /** 卸载 SKILL：删除 ~/.reasonix/skills/<name> 目录 */
