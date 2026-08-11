@@ -2187,9 +2187,11 @@ public class MainActivity extends Activity {
         } else {
             Log.d(TAG, "reasonix exists, keep current version");
         }
-        // pty-bridge
+        // pty-bridge：先删除再写入（旧环境进程可能仍 exec 着该文件，
+        // 直接覆盖(O_TRUNC)报 ETXTBSY；unlink 正在执行的 inode 合法）
         File bridge = new File(rootfs, "usr/bin/pty-bridge");
         bridge.getParentFile().mkdirs();
+        bridge.delete();
         extractAsset("usr/bin/pty-bridge", bridge);
         bridge.setExecutable(true, false);
         // entry.sh
@@ -2236,6 +2238,7 @@ public class MainActivity extends Activity {
         extractAsset("usr/bin/reasonix", rx);
         rx.setExecutable(true, false);
         File bridge = new File(rootfs, "usr/bin/pty-bridge");
+        bridge.delete();   // 防残留 exec 导致 ETXTBSY（unlink 正在执行的 inode 合法）
         extractAsset("usr/bin/pty-bridge", bridge);
         bridge.setExecutable(true, false);
 
