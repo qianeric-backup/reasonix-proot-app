@@ -1135,7 +1135,7 @@ public class MainActivity extends Activity {
         chrootWarn.setPadding(0, dp(6), 0, dp(2));
         // 固定高度：警告出现/消失/精简不引起功能页内容上下移动
         panel.addView(chrootWarn, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(46)));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(60)));
 
         // 安装进度区（固化显示且高度固定：空闲/安装中/完成时输出内容变化不引起功能页上下调整）
         LinearLayout progressBox = new LinearLayout(this);
@@ -1163,7 +1163,7 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(10)));
         progressBox.addView(progressText);
         panel.addView(progressBox, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(78)));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(88)));
 
         // envs 第 4 列：是否依赖 chroot 运行模式。实测仅 Android 开发依赖
         // （JVM 需 root 域 execmem，proot + SELinux enforcing 下 mprotect RWX 被拒无法启动）；
@@ -1487,6 +1487,10 @@ public class MainActivity extends Activity {
         tv.setTypeface(android.graphics.Typeface.MONOSPACE);
         tv.setBackgroundColor(0xFF101010);
         tv.setPadding(dp(10), dp(8), dp(10), dp(8));
+        // 固定最小高度 + 行数限制：结果回显出现/更新不引起功能页内容上下移动（长输出省略，完整在终端）
+        tv.setMinHeight(dp(48));
+        tv.setMaxLines(4);
+        tv.setEllipsize(android.text.TextUtils.TruncateAt.END);
         return tv;
     }
 
