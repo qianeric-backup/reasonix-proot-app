@@ -1136,27 +1136,33 @@ public class MainActivity extends Activity {
         chrootWarn.setPadding(0, dp(10), 0, dp(6));
         panel.addView(chrootWarn);
 
-        // 安装进度区（初始隐藏，点击安装后显示；安装期间禁用所有按钮防止并发覆盖状态文件）
+        // 安装进度区（固化显示且高度固定：空闲/安装中/完成时输出内容变化不引起功能页上下调整）
         LinearLayout progressBox = new LinearLayout(this);
         progressBox.setOrientation(LinearLayout.VERTICAL);
-        progressBox.setPadding(0, dp(12), 0, dp(12));
-        progressBox.setVisibility(View.GONE);
+        progressBox.setPadding(0, dp(12), 0, dp(8));
+        progressBox.setVisibility(View.VISIBLE);
         TextView progressTitle = new TextView(this);
-        progressTitle.setTextColor(0xFFFFFFFF);
+        progressTitle.setText("安装进度");
+        progressTitle.setTextColor(0xFFAAAAAA);
         progressTitle.setTextSize(14);
         progressTitle.setTypeface(null, android.graphics.Typeface.BOLD);
         ProgressBar progressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         progressBar.setMax(100);
         progressBar.setProgress(0);
+        progressBar.setIndeterminate(false);
         TextView progressText = new TextView(this);
+        progressText.setText("空闲：点列表中的「安装」开始，进度实时显示于此。");
         progressText.setTextColor(0xFFAAAAAA);
         progressText.setTextSize(12);
         progressText.setPadding(0, dp(4), 0, 0);
+        progressText.setMaxLines(2);   // 固定行数，输出变化不改变高度
+        progressText.setEllipsize(android.text.TextUtils.TruncateAt.END);
         progressBox.addView(progressTitle);
         progressBox.addView(progressBar, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(10)));
         progressBox.addView(progressText);
-        panel.addView(progressBox);
+        panel.addView(progressBox, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(78)));
 
         // envs 第 4 列：是否依赖 chroot 运行模式。实测仅 Android 开发依赖
         // （JVM 需 root 域 execmem，proot + SELinux enforcing 下 mprotect RWX 被拒无法启动）；
@@ -1179,25 +1185,8 @@ public class MainActivity extends Activity {
         envScroll.addView(envList);
         panel.addView(envScroll, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(220)));
-        loadInstalledEnvs(envList, envs);
-        panel.addView(createDarkTip("安装（大环境 Android/Go 耗时较长）："));
-        final Button[] buttons = new Button[envs.length];
-        for (int i = 0; i < envs.length; i++) {
-            final String[] e = envs[i];
-            Button b = createDarkButton(e[0] + "  ｜  " + e[2]);
-            if (!chrootOn && "1".equals(e[3])) {
-                // 依赖 chroot 但未开启：置灰不可用（灰色文字 + 更暗背景）
-                b.setEnabled(false);
-                b.setTextColor(0xFF6A6A6A);
-                b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF1E1E1E));
-            } else {
-                b.setOnClickListener(v -> installDevEnv(e[0], e[1], e[4], b, buttons,
-                        progressBox, progressTitle, progressBar, progressText));
-            }
-            panel.addView(b);
-            buttons[i] = b;
-        }
-        // 面板重开时若仍有安装任务在后台进行：恢复显示进度区并禁用全部按钮
+        loadInstalledEnvs(envList, envs, progressBox, progressTitle, progressBar, progressText);
+        // 面板重开时若仍有安装任务在后台进行：恢复显示进度区
         String installing = devEnvInstallingName;
         if (installing != null) {
             progressBox.setVisibility(View.VISIBLE);
@@ -1206,16 +1195,15 @@ public class MainActivity extends Activity {
             progressBar.setIndeterminate(true);
             progressBar.setProgress(0);
             progressText.setText("安装进行中，请稍候...");
-            for (Button b : buttons) b.setEnabled(false);
         }
         showPanel("开发环境", panel, null);
     }
 
     /** 安装开发环境：guest 内 nohup 后台 apk add（防服务循环 20s timeout 杀掉长安装），
      *  轮询状态文件报告结果，并解析 apk 日志 (x/N) 实时刷新面板进度条 */
-    private void installDevEnv(String name, String packages, String keyCmds, Button btn, Button[] allBtns,
+    private void installDevEnv(String name, String packages, String keyCmds,
                                View progressBox, TextView progressTitle, ProgressBar progressBar,
-                               TextView progressText) {
+                               TextView progressText, LinearLayout envList, String[][] envs) {
         if (devEnvInstalling) {
             runOnUiThread(() -> pushOutput("\r\n[开发环境] 已有安装任务进行中，请等待完成\r\n"));
             return;
@@ -1230,8 +1218,6 @@ public class MainActivity extends Activity {
             progressBar.setIndeterminate(true);
             progressBar.setProgress(0);
             progressText.setText("正在更新软件源索引...");
-            for (Button b : allBtns) b.setEnabled(false);
-            btn.setText(name + " 安装中...");
         });
         new Thread(() -> {
             try {
@@ -1240,6 +1226,11 @@ public class MainActivity extends Activity {
                 // 半装自动修复：关键命令缺失（apk 数据库标记已装但文件中断缺失，如 libjli.so/二进制丢失）
                 // 时先 apk del 清理残留再全新安装，避免 apk add 因"已装"直接跳过导致环境不可用。
                 String script = "#!/bin/sh\n"
+                        + "# 等待其他 apk 操作完成（防并发 apk 数据库锁冲突：Unable to lock database, 退出码 99）\n"
+                        + "i=0\n"
+                        + "while [ -f /root/.env-lock ] && [ $i -lt 90 ]; do sleep 1; i=$((i+1)); done\n"
+                        + "touch /root/.env-lock\n"
+                        + "trap 'rm -f /root/.env-lock' EXIT\n"
                         + "apk update > /root/.env-install.log 2>&1\n"
                         + "echo \"--- 安装 " + name + " ---\" >> /root/.env-install.log\n"
                         + "NEED=0\n"
@@ -1299,8 +1290,7 @@ public class MainActivity extends Activity {
                             progressBar.setProgress(100);
                             progressText.setText((ok ? "完成（退出码 0）" : "失败（apk 退出码 " + code + "）")
                                     + "：" + tail.trim());
-                            btn.setText(name + (ok ? " ✓ 已安装" : "（失败，可重试）"));
-                            for (Button b : allBtns) b.setEnabled(true);
+                            loadInstalledEnvs(envList, envs, progressBox, progressTitle, progressBar, progressText);
                             pushOutput(msg);
                         });
                         return;
@@ -1312,8 +1302,7 @@ public class MainActivity extends Activity {
                     progressBar.setIndeterminate(false);
                     progressBar.setProgress(0);
                     progressText.setText("超过 15 分钟未完成，请检查网络后重试");
-                    btn.setText(name + "（超时，可重试）");
-                    for (Button b : allBtns) b.setEnabled(true);
+                    loadInstalledEnvs(envList, envs, progressBox, progressTitle, progressBar, progressText);
                     pushOutput("\r\n[开发环境] " + name + " 安装超时（15 分钟），请检查网络后重试\r\n");
                 });
             } catch (Exception e) {
@@ -1324,8 +1313,7 @@ public class MainActivity extends Activity {
                     progressBar.setIndeterminate(false);
                     progressBar.setProgress(0);
                     progressText.setText("异常：" + e.getMessage());
-                    btn.setText(name + "（失败，可重试）");
-                    for (Button b : allBtns) b.setEnabled(true);
+                    loadInstalledEnvs(envList, envs, progressBox, progressTitle, progressBar, progressText);
                     pushOutput("\r\n[开发环境] 安装失败: " + e.getMessage() + "\r\n");
                 });
             } finally {
@@ -1336,7 +1324,8 @@ public class MainActivity extends Activity {
     }
 
     /** 检测各开发环境是否已安装（关键命令存在），渲染到已安装列表 */
-    private void loadInstalledEnvs(LinearLayout container, String[][] envs) {
+    private void loadInstalledEnvs(LinearLayout container, String[][] envs, View progressBox,
+                                   TextView progressTitle, ProgressBar progressBar, TextView progressText) {
         container.removeAllViews();
         container.addView(createDarkTip("检测中..."));
         new Thread(() -> {
@@ -1364,18 +1353,21 @@ public class MainActivity extends Activity {
                         partial[i] = count > 0 && count < total;
                     }
                 }
-                runOnUiThread(() -> renderInstalledEnvs(container, envs, installed, partial));
+                final boolean[] fInstalled = installed, fPartial = partial;
+                runOnUiThread(() -> renderInstalledEnvs(container, envs, fInstalled, fPartial,
+                        progressBox, progressTitle, progressBar, progressText));
             } catch (Exception e) {
                 Log.e(TAG, "load installed envs failed", e);
             }
         }, "env-installed-load").start();
     }
 
-    /** 渲染已安装环境列表（名称 + 状态 + 删除按钮） */
+    /** 渲染环境列表（每行：名称 + 状态 + 未安装时的「安装」按钮 + 已装时的「删除」按钮） */
     private void renderInstalledEnvs(LinearLayout container, String[][] envs,
-                                     boolean[] installed, boolean[] partial) {
+                                     boolean[] installed, boolean[] partial,
+                                     View progressBox, TextView progressTitle,
+                                     ProgressBar progressBar, TextView progressText) {
         container.removeAllViews();
-        boolean any = false;
         for (int i = 0; i < envs.length; i++) {
             final String[] e = envs[i];
             LinearLayout row = new LinearLayout(this);
@@ -1388,21 +1380,27 @@ public class MainActivity extends Activity {
             tv.setTextColor(installed[i] ? 0xFF7FDB8A : (partial[i] ? 0xFFFFD54F : 0xFF888888));
             tv.setTextSize(13);
             row.addView(tv, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            // 未安装/部分 → 安装（重装）按钮；已安装/部分 → 删除按钮
+            if (!installed[i]) {
+                final String label = partial[i] ? "重装" : "安装";
+                Button inst = createDarkButton(label);
+                inst.setOnClickListener(v -> installDevEnv(e[0], e[1], e[4],
+                        progressBox, progressTitle, progressBar, progressText, container, envs));
+                row.addView(inst);
+            }
             if (installed[i] || partial[i]) {
-                final String name = e[0];
-                final String pkgs = e[1];
                 Button del = createDarkButton("删除");
-                del.setOnClickListener(v -> uninstallDevEnv(name, pkgs, container, envs));
+                del.setOnClickListener(v -> uninstallDevEnv(e[0], e[1], container, envs,
+                        progressBox, progressTitle, progressBar, progressText));
                 row.addView(del);
             }
             container.addView(row);
-            any = true;
         }
-        if (!any) container.addView(createDarkTip("（无已安装环境）"));
     }
 
     /** 删除开发环境：guest 内 nohup apk del，完成后刷新已安装列表 */
-    private void uninstallDevEnv(String name, String packages, LinearLayout container, String[][] envs) {
+    private void uninstallDevEnv(String name, String packages, LinearLayout container, String[][] envs,
+                                 View progressBox, TextView progressTitle, ProgressBar progressBar, TextView progressText) {
         if (devEnvInstalling) {
             runOnUiThread(() -> pushOutput("\r\n[开发环境] 有安装/删除任务进行中，请等待完成\r\n"));
             return;
@@ -1413,6 +1411,11 @@ public class MainActivity extends Activity {
         new Thread(() -> {
             try {
                 String script = "#!/bin/sh\n"
+                        + "# 等待其他 apk 操作完成（防并发 apk 数据库锁冲突）\n"
+                        + "i=0\n"
+                        + "while [ -f /root/.env-lock ] && [ $i -lt 90 ]; do sleep 1; i=$((i+1)); done\n"
+                        + "touch /root/.env-lock\n"
+                        + "trap 'rm -f /root/.env-lock' EXIT\n"
                         + "echo \"--- 删除 " + name + " ---\" > /root/.env-install.log\n"
                         + "apk del " + packages + " >> /root/.env-install.log 2>&1\n"
                         + "echo INSTALL_DONE_$? > /root/.env-done\n";
@@ -1427,7 +1430,7 @@ public class MainActivity extends Activity {
                     if (st != null && st.contains("INSTALL_DONE_")) {
                         runOnUiThread(() -> {
                             pushOutput("\r\n[开发环境] " + name + " 已删除\r\n");
-                            loadInstalledEnvs(container, envs);
+                            loadInstalledEnvs(container, envs, progressBox, progressTitle, progressBar, progressText);
                         });
                         return;
                     }
