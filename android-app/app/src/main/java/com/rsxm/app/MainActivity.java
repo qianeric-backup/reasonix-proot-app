@@ -587,8 +587,9 @@ public class MainActivity extends Activity {
     }
 
     /** 安装 SKILL：skill 是 reasonix 的 AI 技能包（SKILL.md 规范格式），
-     *  写入 ~/.reasonix/skills/<name>/SKILL.md，reasonix 启动时自动加载，
-     *  对话内可用 /skill enable <name> 启用 */
+     *  写入当前项目（reasonix 工作区）的 .reasonix/skills/<name>/SKILL.md，
+     *  reasonix 按工作区加载：<workspace>/.reasonix/skills/（默认项目 /root）,
+     *  安装后 reasonix 内 /skills reload 或重启环境即可显示 */
     private void showSkillInstallDialog() {
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
@@ -660,8 +661,9 @@ public class MainActivity extends Activity {
         new Thread(() -> {
             try {
                 String out = executeInGuest(
-                        "ls ~/.reasonix/skills/ 2>/dev/null; echo ===DISABLED===; "
-                                + "grep -A8 '\\[skills\\]' ~/.reasonix/config.toml 2>/dev/null | grep disabled_skills", 10);
+                        "SK=$(cat $HOME/.rsxm-project 2>/dev/null); [ -n \"$SK\" ] || SK=$HOME; SK=\"$SK/.reasonix/skills\"; "
+                                + "ls \"$SK\" 2>/dev/null; echo ===DISABLED===; "
+                                + "grep -A8 '\\[skills\\]' $HOME/.reasonix/config.toml 2>/dev/null | grep disabled_skills", 10);
                 final List<String> names = new ArrayList<>();
                 final java.util.Set<String> disabled = new java.util.HashSet<>();
                 if (out != null) {
@@ -729,7 +731,7 @@ public class MainActivity extends Activity {
         if (!has) container.addView(createDarkTip("（无匹配的已安装 SKILL）"));
     }
 
-    /** 启用/禁用 SKILL：修改 guest 内 ~/.reasonix/config.toml 的 [skills] disabled_skills */
+    /** 启用/禁用 SKILL：修改 guest 内 $HOME/.reasonix/config.toml 的 [skills] disabled_skills */
     private void setSkillEnabled(String name, boolean enable) {
         new Thread(() -> {
             try {
@@ -772,13 +774,13 @@ public class MainActivity extends Activity {
         }, "skill-toggle").start();
     }
 
-    /** 卸载 SKILL：删除 ~/.reasonix/skills/<name> 目录 */
+    /** 卸载 SKILL：删除当前项目 .reasonix/skills/<name> 目录 */
     private void uninstallSkill(String name) {
         new Thread(() -> {
             try {
                 String out = executeInGuest(
-                        "rm -rf ~/.reasonix/skills/" + name
-                                + " && echo UNINSTALLED_OK && ls ~/.reasonix/skills/ 2>&1", 10);
+                        "SK=$(cat $HOME/.rsxm-project 2>/dev/null); [ -n \"$SK\" ] || SK=$HOME; SK=\"$SK/.reasonix/skills\"; "
+                                + "rm -rf \"$SK/" + name + "\" && echo UNINSTALLED_OK && ls \"$SK\" 2>&1", 10);
                 String msg = "\r\n[卸载 SKILL: " + name + "]\r\n"
                         + ((out != null && out.contains("UNINSTALLED_OK"))
                             ? "已删除。剩余 SKILL：\n" + out.replace("UNINSTALLED_OK", "").trim()
@@ -797,14 +799,15 @@ public class MainActivity extends Activity {
             try {
                 String b64 = android.util.Base64.encodeToString(
                         content.getBytes(StandardCharsets.UTF_8), android.util.Base64.NO_WRAP);
-                String cmd = "mkdir -p ~/.reasonix/skills/" + name
-                        + " && echo " + b64 + " | base64 -d > ~/.reasonix/skills/" + name + "/SKILL.md"
-                        + " && chmod 644 ~/.reasonix/skills/" + name + "/SKILL.md"
-                        + " && echo INSTALLED_OK && ls -la ~/.reasonix/skills/" + name + "/SKILL.md";
+                String cmd = "SK=$(cat $HOME/.rsxm-project 2>/dev/null); [ -n \"$SK\" ] || SK=$HOME; SK=\"$SK/.reasonix/skills\"; "
+                        + "mkdir -p \"$SK/" + name + "\""
+                        + " && echo " + b64 + " | base64 -d > \"$SK/" + name + "/SKILL.md\""
+                        + " && chmod 644 \"$SK/" + name + "/SKILL.md\""
+                        + " && echo INSTALLED_OK && ls -la \"$SK/" + name + "/SKILL.md\"";
                 String out = executeInGuest(cmd, 12);
                 String msg = "\r\n[安装 SKILL: " + name + "]\r\n"
                         + (out == null ? "(无响应)" : out)
-                        + "\r\n[完成。重启应用环境或 reasonix 内 /skill enable " + name + " 启用]\r\n";
+                        + "\r\n[完成。reasonix 内 /skills reload 或重启应用环境后显示]\r\n";
                 runOnUiThread(() -> pushOutput(msg));
             } catch (Exception e) {
                 Log.e(TAG, "install skill failed", e);
