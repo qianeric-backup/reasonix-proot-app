@@ -32,6 +32,7 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
 import java.io.File;
@@ -637,10 +638,13 @@ public class MainActivity extends Activity {
         final EditText searchInput = createDarkEditText("查找 SKILL（输入名称关键字过滤）",
                 InputType.TYPE_CLASS_TEXT);
         panel.addView(searchInput);
-        // ---- 已装列表区 ----
+        // ---- 已装列表区（固定高度 + 二级滑动，列表变长不会导致整个功能页滚动）----
+        final ScrollView listScroll = new ScrollView(this);
         final LinearLayout listBox = new LinearLayout(this);
         listBox.setOrientation(LinearLayout.VERTICAL);
-        panel.addView(listBox);
+        listScroll.addView(listBox);
+        panel.addView(listScroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(240)));
         panel.addView(createDarkTip("说明：勾选 = 启用（reasonix 可加载）；取消勾选 = 禁用（从 reasonix 隐藏）。"));
         // 刷新/查找联动
         skillRefreshRunnable = () -> loadSkillList(listBox, searchInput.getText().toString().trim());
@@ -833,10 +837,13 @@ public class MainActivity extends Activity {
         curView.setTypeface(null, android.graphics.Typeface.BOLD);
         curView.setPadding(dp(2), dp(8), dp(2), dp(4));
         panel.addView(curView);
-        // 项目列表（内置 + 手机分组渲染，每行 名称/进入/删除）
+        // 项目列表（内置 + 手机分组渲染，每行 名称/进入/删除；固定高度 + 二级滑动）
+        final ScrollView listScroll = new ScrollView(this);
         final LinearLayout listBox = new LinearLayout(this);
         listBox.setOrientation(LinearLayout.VERTICAL);
-        panel.addView(listBox);
+        listScroll.addView(listBox);
+        panel.addView(listScroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(300)));
         // 新增区
         panel.addView(createDarkTip("新建项目：输入名称后选择创建位置"));
         final EditText newInput = createDarkEditText("新项目名称（如 myapp，字母数字._-）",
@@ -1036,7 +1043,13 @@ public class MainActivity extends Activity {
                 // 内置目录走 guest（rootfs 内）
                 boolean ok;
                 if (inSdcard) {
-                    ok = new File("/storage/emulated/0/ReasonixProjects", name).mkdirs();
+                    // mkdirs 失败不阻断（reasonix wrapper 启动时对标记目录 mkdir -p 兜底，
+                    // guest 内可用；宿主可见性在权限正常时由这里保证）
+                    try {
+                        new File("/storage/emulated/0/ReasonixProjects", name).mkdirs();
+                    } catch (Exception ignored) {
+                    }
+                    ok = true;
                 } else {
                     String out = executeInGuest("mkdir -p " + path + " && echo MKDIR_OK", 10);
                     ok = out != null && out.contains("MKDIR_OK");
@@ -1069,7 +1082,13 @@ public class MainActivity extends Activity {
                 boolean ok;
                 if (path.startsWith("/sdcard/")) {
                     String name = path.substring(path.lastIndexOf('/') + 1);
-                    ok = new File("/storage/emulated/0/ReasonixProjects", name).mkdirs();
+                    // 宿主 mkdirs（文件管理器可见）；失败不阻断切换——reasonix wrapper 启动时
+                    // 会对标记目录 mkdir -p（guest 内 /sdcard 绑定可见宿主目录），目录存在性由它兜底
+                    try {
+                        new File("/storage/emulated/0/ReasonixProjects", name).mkdirs();
+                    } catch (Exception ignored) {
+                    }
+                    ok = true;
                 } else {
                     String out = executeInGuest("mkdir -p " + path + " && echo MKDIR_OK", 10);
                     ok = out != null && out.contains("MKDIR_OK");
