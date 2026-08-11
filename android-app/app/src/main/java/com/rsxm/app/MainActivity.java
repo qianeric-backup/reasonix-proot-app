@@ -183,17 +183,17 @@ public class MainActivity extends Activity {
         }, 4000);
 
         // 标题栏菜单按钮：打开侧滑配置列表
-        findViewById(R.id.btn_menu).setOnClickListener(v -> drawerLayout.openDrawer(GravityCompat.START));
+        findViewById(R.id.btn_menu).setOnClickListener(v -> drawerLayout.openDrawer(GravityCompat.START, false));
         // 侧滑菜单功能
-        findViewById(R.id.menu_adb).setOnClickListener(v -> { drawerLayout.closeDrawers(); showAdbDialog(); });
-        findViewById(R.id.menu_apikey).setOnClickListener(v -> { drawerLayout.closeDrawers(); showApiKeyConfigDialog(); });
-        findViewById(R.id.menu_update).setOnClickListener(v -> { drawerLayout.closeDrawers(); showUpdateResonixDialog(); });
+        findViewById(R.id.menu_adb).setOnClickListener(v -> { drawerLayout.closeDrawer(GravityCompat.START, false); showAdbDialog(); });
+        findViewById(R.id.menu_apikey).setOnClickListener(v -> { drawerLayout.closeDrawer(GravityCompat.START, false); showApiKeyConfigDialog(); });
+        findViewById(R.id.menu_update).setOnClickListener(v -> { drawerLayout.closeDrawer(GravityCompat.START, false); showUpdateResonixDialog(); });
         findViewById(R.id.menu_bgmode).setOnClickListener(v -> {
             SharedPreferences sp = getSharedPreferences("prefs", MODE_PRIVATE);
             boolean on = !sp.getBoolean("background_mode", false);
             sp.edit().putBoolean("background_mode", on).apply();
             updateBgModeLabel();
-            drawerLayout.closeDrawers();
+            drawerLayout.closeDrawer(GravityCompat.START, false);
             // 注意：不向终端 pushOutput 提示文本——reasonix 在 alt screen 全屏自绘，
             // 插入的文本会污染 TUI 画面（错误 screen 状态）；状态由菜单标签显示。
             if (on) {
@@ -209,7 +209,7 @@ public class MainActivity extends Activity {
             sp.edit().putBoolean("yolo_mode", on).apply();
             syncYoloMark(on);
             updateYoloModeLabel();
-            drawerLayout.closeDrawers();
+            drawerLayout.closeDrawer(GravityCompat.START, false);
             // 立即生效：重启 reasonix 环境（reasonix 启动时 wrapper 读取新标记决定审批模式）。
             // 不 pushOutput（reasonix alt screen 自绘会污染 TUI）；状态由菜单标签与重启日志显示。
             restartEnvironment();
@@ -217,10 +217,10 @@ public class MainActivity extends Activity {
         updateYoloModeLabel();
         // 升级安装后 rootfs 可能没有 YOLO 标记：以偏好为准补写（默认开启）
         syncYoloMark(getSharedPreferences("prefs", MODE_PRIVATE).getBoolean("yolo_mode", true));
-        findViewById(R.id.menu_root).setOnClickListener(v -> { drawerLayout.closeDrawers(); showRootDialog(); });
-        findViewById(R.id.menu_skill).setOnClickListener(v -> { drawerLayout.closeDrawers(); showSkillInstallDialog(); });
-        findViewById(R.id.menu_project).setOnClickListener(v -> { drawerLayout.closeDrawers(); showProjectDialog(); });
-        findViewById(R.id.menu_dev).setOnClickListener(v -> { drawerLayout.closeDrawers(); showDevEnvDialog(); });
+        findViewById(R.id.menu_root).setOnClickListener(v -> { drawerLayout.closeDrawer(GravityCompat.START, false); showRootDialog(); });
+        findViewById(R.id.menu_skill).setOnClickListener(v -> { drawerLayout.closeDrawer(GravityCompat.START, false); showSkillInstallDialog(); });
+        findViewById(R.id.menu_project).setOnClickListener(v -> { drawerLayout.closeDrawer(GravityCompat.START, false); showProjectDialog(); });
+        findViewById(R.id.menu_dev).setOnClickListener(v -> { drawerLayout.closeDrawer(GravityCompat.START, false); showDevEnvDialog(); });
 
         // 全屏功能面板：返回按钮关闭（系统返回键同样生效）
         findViewById(R.id.panel_back).setOnClickListener(v -> hidePanel());
@@ -333,7 +333,7 @@ public class MainActivity extends Activity {
         modeBtn.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF1E1E1E));
         panel.addView(modeBtn);
         // 全屏面板展示（取代系统弹窗，避免遮挡控件）
-        showPanel("root", panel, null);
+        showPanel("ROOT 功能", panel, null);
         // 检测状态（后台线程）
         new Thread(() -> {
             final String st;
