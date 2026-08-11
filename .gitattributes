@@ -1,0 +1,4 @@
+# 仓库内 shell 脚本必须保持 LF：脚本在 Android busybox/sh 下执行，
+# CRLF 会导致 heredoc 与命令解析失败。core.autocrlf=true 的 Windows 工作区
+# 若无此规则会在 checkout 时把 LF 转成 CRLF。
+*.sh text eol=lf

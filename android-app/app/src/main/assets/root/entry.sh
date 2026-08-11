@@ -306,18 +306,25 @@ chmod -R a+rwx /root/.reasonix/projects/ 2>/dev/null
 # 将真实二进制改名为 reasonix.bin，用 wrapper 替代 reasonix——无论 entry.sh 首次启动
 # 还是用户在 shell 里再次输入 reasonix，都会先清理会话恢复标记再启动。
 
-# 环境说明（reasonix 项目记忆 AGENTS.md，启动自动加载）：告知 AI 本环境是 Android 手机
-# proot/chroot 容器（双运行模式），adb shell 经 root 命令桥直连手机（无需无线调试），
-# 可打开应用/模拟操作；内置 root 命令桥（root <命令>）。
-cat > /root/AGENTS.md <<'MD'
-# RSXM 环境说明
+# 环境说明（adb / root 桥）：告知 AI 本环境是 Android 手机 proot/chroot 容器（双运行模式），
+# adb shell 经 root 命令桥直连手机（无需无线调试），可打开应用/模拟操作；内置 root 命令桥（root <命令>）。
+#
+# 关键：reasonix 的指令解析先加载 **Reasonix home（~/.reasonix）下的用户全局指令**，
+# 再加载项目目录（workspace root → 目标路径）的 AGENTS.md/REASONIX.md/CLAUDE.md。
+# 而 wrapper 会把会话切到 .rsxm-project 指定的任意项目目录 —— 若只写 /root/AGENTS.md（项目级），
+# 换项目后 AI 就读不到 adb/root 桥说明。因此必须写入 home 根目录的全局指令，
+# 保证任何 cwd / 任何项目下都自动注入；再以 cp 同步一份到 /root/AGENTS.md（项目目录恰为 /root 时也生效）。
+mkdir -p /root/.reasonix
+cat > /root/.reasonix/AGENTS.md <<'MD'
+# RSXM 环境能力说明（全局，所有项目生效）
 
 本环境是运行在 **Android 手机** 上的 Alpine Linux 容器（proot/chroot 两种运行模式，不是服务器，也不是远程机器）。
+本说明位于 Reasonix home 的用户全局指令中，**无论当前项目目录在哪，以下能力始终可用**。
 用户要求"打开/操作手机上的应用"时，直接用下面的 adb shell 命令即可完成。
 
 ## 控制宿主手机（重要）
 - `adb shell <命令>` 会直接通过**手机的 root 权限**（root 命令桥）执行，**无需无线调试连接**。
-  `adb devices` 显示 `no devices/emulators found` 是正常现象（命令实际走 root 桥执行）。
+  `adb devices` 走真实 adb（未连接无线调试时显示 `no devices/emulators found` 属正常，不影响 `adb shell` 经 root 桥执行）。
 - 打开应用：`adb shell am start -n <包名>/<Activity>`，例如打开微信：
   `adb shell am start -n com.tencent.mm/.ui.LauncherUI`
 - 常用手机操作（root 直连）：
@@ -329,6 +336,42 @@ cat > /root/AGENTS.md <<'MD'
 ## 内置 root 命令桥（root 权限）
 - 直接执行 `root <命令>` 以 root 权限运行宿主手机命令，例如：
   `root id`、`root 'pm list packages'`、`root 'settings put global ...'`
+
+详细操作手册见全局 skill：`rsxm-android-bridge`（`/rsxm-android-bridge` 或 run_skill 调用）。
+MD
+# 同步一份到项目级 AGENTS.md（项目目录恰为 /root 时同样生效；两种模式共享同一 rootfs）
+cp -f /root/.reasonix/AGENTS.md /root/AGENTS.md
+
+# 全局 skill（Reasonix home/skills，跨项目可见，AI 可按需 /rsxm-android-bridge 调用）
+mkdir -p /root/.reasonix/skills/rsxm-android-bridge
+cat > /root/.reasonix/skills/rsxm-android-bridge/SKILL.md <<'MD'
+---
+name: rsxm-android-bridge
+description: RSXM 环境能力手册 —— adb shell 经 root 命令桥直连宿主 Android 手机（无需无线调试），root <命令> 以 su 执行宿主命令。需要操作手机（打开应用 / 模拟点击输入 / 查包 / 改系统设置）时查阅。
+---
+# RSXM adb / root 桥能力手册
+
+本环境是运行在 Android 手机上的 Alpine Linux 容器（proot/chroot 双模式）。
+通过以下两个桥可直接控制**宿主手机**（即安装本 App 的那台手机）。
+
+## adb 桥（root 直连）
+- `adb shell <命令>` 走 **root 命令桥**（App 侧 su 执行），**无需无线调试连接**。
+  `adb devices` 走真实 adb（未连接无线调试时显示 `no devices/emulators found` 属正常，不影响 `adb shell` 经 root 桥执行）。
+- 无 root（无 su）时自动回退无线调试，需先配对连接。
+- 示例：
+  - 打开微信：`adb shell am start -n com.tencent.mm/.ui.LauncherUI`
+  - 模拟点击：`adb shell input tap X Y`；模拟输入：`adb shell input text 内容`
+  - 查包：`adb shell pm list packages`；禁用应用：`adb shell pm disable-user --user 0 <包名>`
+  - 改系统设置：`adb shell settings put global <键> <值>`
+
+## root 命令桥
+- `root <命令>` 直接以 root（su）执行宿主手机命令，例如：
+  `root id`、`root 'pm list packages'`、`root 'settings put global ...'`
+- 执行结果由 App 回写；超时说明 Root 授权未通过，请先在侧滑菜单 ROOT 面板检查授权。
+
+## 注意
+- 容器内命令（apk/文件操作等）直接执行即可，无需前缀。
+- 只有"操作宿主手机"的命令才需要 adb / root 桥。
 MD
 # 幂等/更新安全：reasonix 更新会覆盖 wrapper 位置（写入新二进制），entry.sh 检测到
 # reasonix 不是 wrapper（首行无标记）时，把新二进制备份为 reasonix.bin；
