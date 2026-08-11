@@ -5,6 +5,12 @@ export HOME=/root
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export TERM=xterm-256color
 export LANG=C.UTF-8
+# 重置宿主路径临时目录：proot 启动进程继承 Android 的 TMPDIR（/data/app/.../lib/arm64，
+# app 侧为 proot 自身设的宿主路径），guest 内 reasonix/工具按此创建临时目录会落到
+# 不存在的宿主路径（sessiontemp: list temp root ... no such file）或 rootfs 里错误的 /data/app。
+# 统一改到 guest 内可写 /tmp。
+export TMPDIR=/tmp
+export TMP=/tmp
 
 # 终端尺寸由 Android 端 xterm.js 自适应后通过 pty-bridge 动态设置，
 # 这里不再固定 stty（避免覆盖 resize 后的窗口大小）。
@@ -255,7 +261,16 @@ SH
     # ADB 独立执行服务：app 侧把命令写入 /root/.adb-cmd，此循环执行并把
     # 结果写入 /root/.adb-out（末尾追加 __DONE__ 标记）。使 ADB 无线调试
     # 直接由 app 驱动，不依赖 reasonix（AI）会话。
+    # 防御性强制 Alpine 环境：proot 启动进程继承 Android 宿主环境（HOME=/、PATH=Android），
+    # 若外层 export 未作用到此子 shell，执行的命令会解析到宿主 sh/bash（如 /system_ext/bin/bash）
+    # 且找不到 apk/python3 等 Alpine 工具 → 面板命令/shell 环境异常。此处显式重置。
     (
+        export HOME=/root
+        export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+        export TERM=xterm-256color
+        export LANG=C.UTF-8
+        export TMPDIR=/tmp
+        export TMP=/tmp
         touch /root/.adb-service
         while [ -f /root/.adb-service ]; do
             if [ -s /root/.adb-cmd ]; then

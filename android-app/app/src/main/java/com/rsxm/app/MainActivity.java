@@ -1682,12 +1682,20 @@ public class MainActivity extends Activity {
             tv.setTextColor(installed[i] ? 0xFF7FDB8A : (partial[i] ? 0xFFFFD54F : 0xFF888888));
             tv.setTextSize(13);
             row.addView(tv, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-            // 未安装/部分 → 安装（重装）按钮；已安装/部分 → 删除按钮
+            // 未安装/部分 → 安装（重装）按钮；chroot 依赖环境（Android 开发等，e[3]=="1"）
+            // 在非 chroot 模式不可用（JVM 需 root 域）→ 置灰；已安装/部分 → 删除按钮
             if (!installed[i]) {
-                final String label = partial[i] ? "重装" : "安装";
+                final boolean needChroot = e[3].equals("1") && !isChrootMode();
+                final String label = needChroot ? "需 chroot" : (partial[i] ? "重装" : "安装");
                 Button inst = createDarkButton(label);
-                inst.setOnClickListener(v -> installDevEnv(e[0], e[1], e[4],
-                        progressBox, progressTitle, progressBar, progressText, container, envs));
+                if (needChroot) {
+                    inst.setEnabled(false);
+                    inst.setTextColor(0xFF6A6A6A);
+                    inst.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF1E1E1E));
+                } else {
+                    inst.setOnClickListener(v -> installDevEnv(e[0], e[1], e[4],
+                            progressBox, progressTitle, progressBar, progressText, container, envs));
+                }
                 row.addView(inst);
                 if (customNames.contains(e[0])) {
                     Button rm = createDarkButton("移除");
