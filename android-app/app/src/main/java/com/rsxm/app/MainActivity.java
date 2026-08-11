@@ -309,24 +309,25 @@ public class MainActivity extends Activity {
                         + "⚠ root 可完全控制系统，请勿执行未知命令。");
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(16), dp(8), dp(16), 0);
-        panel.addView(status);
-        panel.addView(tip);
+        panel.setPadding(dp(16), dp(8), dp(16), dp(12));
+        addV(panel, status, 0);
+        addV(panel, tip, 8);
         Button testBtn = createDarkButton("测试 root（执行 id）");
-        panel.addView(testBtn);
+        addV(panel, testBtn, 10);
         TextView result = createDarkResult();
         result.setText("（测试结果将显示在这里）");
-        panel.addView(result);
+        addV(panel, result, 8);
 
         // 运行模式切换：proot（默认）/ chroot（root 直入，SELinux 保持 enforcing 下 JVM 亦可用）
         final boolean chrootNow = isChrootMode();
+        panel.addView(createDarkSectionTitle("运行模式"));
         TextView modeTip = createDarkTip(
                 "运行模式：" + (chrootNow ? "chroot（root 直入）" : "proot（默认）") + "\n"
                         + "chroot 使用 root 直接 chroot 进环境（需 root 授权），SELinux 保持 enforcing 时\n"
                         + "JVM/安卓开发环境亦正常（proot 模式 enforcing 下不可用）；切换会重启 reasonix 环境。");
         modeTip.setTextColor(chrootNow ? 0xFF7FDB8A : 0xFFAAAAAA);
-        modeTip.setPadding(0, dp(10), 0, dp(4));
-        panel.addView(modeTip);
+        modeTip.setPadding(0, dp(2), 0, dp(4));
+        addV(panel, modeTip, 6);
         Button modeBtn = createDarkButton(chrootNow ? "切换回 proot 模式" : "切换为 chroot 模式（实验）");
         modeBtn.setOnClickListener(v -> {
             getSharedPreferences("prefs", MODE_PRIVATE).edit()
@@ -339,7 +340,7 @@ public class MainActivity extends Activity {
         modeBtn.setEnabled(false);
         modeBtn.setTextColor(0xFF6A6A6A);
         modeBtn.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF1E1E1E));
-        panel.addView(modeBtn);
+        addV(panel, modeBtn, 8);
         // 全屏面板展示（取代系统弹窗，避免遮挡控件）
         showPanel("ROOT", panel, null);
         // 检测状态（后台线程）
@@ -605,18 +606,19 @@ public class MainActivity extends Activity {
     private void showSkillInstallDialog() {
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(16), dp(8), dp(16), 0);
+        panel.setPadding(dp(16), dp(8), dp(16), dp(12));
         panel.addView(createDarkTip(
                 "SKILL 为 reasonix 技能包（SKILL.md），全局安装（所有项目共用，切换项目不影响）。\n"
                         + "格式：开头 YAML frontmatter，含 name 和 description。"));
         // ---- 新增区 ----
+        panel.addView(createDarkSectionTitle("新增 SKILL"));
         skillNameInput = createDarkEditText("SKILL 名称（如 mytool，仅字母数字._-）",
                 InputType.TYPE_CLASS_TEXT);
-        panel.addView(skillNameInput);
+        addV(panel, skillNameInput, 6);
         skillContentInput = new EditText(this);
         skillContentInput.setHint("SKILL.md 内容（粘贴/导入，含 frontmatter）");
         skillContentInput.setTextColor(0xFFE0E0E0);
-        skillContentInput.setHintTextColor(0xFF666666);
+        skillContentInput.setHintTextColor(0xFF707070);
         skillContentInput.setTextSize(13);
         skillContentInput.setGravity(android.view.Gravity.TOP);
         skillContentInput.setSingleLine(false);
@@ -626,8 +628,10 @@ public class MainActivity extends Activity {
         skillContentInput.setBackgroundColor(0xFF1A1A1A);
         skillContentInput.setPadding(dp(10), dp(10), dp(10), dp(10));
         // 固定高度 + 内部滚动（二级滑动）：导入/粘贴大内容时内容区自己滚，不撑动整个功能页
-        panel.addView(skillContentInput, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(160)));
+        LinearLayout.LayoutParams contentLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(110));
+        contentLp.topMargin = dp(6);
+        panel.addView(skillContentInput, contentLp);
         Button importBtn = createDarkButton("从手机文件导入 SKILL.md");
         importBtn.setOnClickListener(v -> {
             Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
@@ -639,7 +643,7 @@ public class MainActivity extends Activity {
                 pushOutput("\r\n[无法打开文件选择器: " + e.getMessage() + "]\r\n");
             }
         });
-        panel.addView(importBtn);
+        addV(panel, importBtn, 8);
         Button installBtn = createDarkButton("安装 SKILL");
         installBtn.setOnClickListener(v -> {
             String name = skillNameInput.getText().toString().trim();
@@ -655,19 +659,23 @@ public class MainActivity extends Activity {
             installSkill(name, content);
             // 列表刷新由 installSkill 完成回调触发（不再固定延时，避免与安装命令并发抢占 .adb-cmd/.adb-out）
         });
-        panel.addView(installBtn);
+        addV(panel, installBtn, 8);
         // ---- 查找区 ----
-        final EditText searchInput = createDarkEditText("查找 SKILL（输入名称关键字过滤）",
+        panel.addView(createDarkSectionTitle("查找"));
+        final EditText searchInput = createDarkEditText("输入名称关键字过滤",
                 InputType.TYPE_CLASS_TEXT);
-        panel.addView(searchInput);
+        addV(panel, searchInput, 6);
         // ---- 已装列表区（固定高度 + 二级滑动，列表变长不会导致整个功能页滚动）----
+        panel.addView(createDarkSectionTitle("已安装 SKILL"));
         final ScrollView listScroll = new ScrollView(this);
         final LinearLayout listBox = new LinearLayout(this);
         listBox.setOrientation(LinearLayout.VERTICAL);
         listScroll.addView(listBox);
-        panel.addView(listScroll, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(300)));
-        panel.addView(createDarkTip("勾选 = 启用；取消勾选 = 禁用（reasonix 隐藏）。"));
+        LinearLayout.LayoutParams listLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(240));
+        listLp.topMargin = dp(6);
+        panel.addView(listScroll, listLp);
+        addV(panel, createDarkTip("勾选 = 启用；取消勾选 = 禁用（reasonix 隐藏）。"), 8);
         // 刷新/查找联动
         skillRefreshRunnable = () -> loadSkillList(listBox, searchInput.getText().toString().trim());
         searchInput.addTextChangedListener(new TextWatcher() {
@@ -943,7 +951,7 @@ public class MainActivity extends Activity {
     private void showProjectDialog() {
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(16), dp(8), dp(16), 0);
+        panel.setPadding(dp(16), dp(8), dp(16), dp(12));
         panel.addView(createDarkTip(
                 "项目为 reasonix 工作目录（会话/记忆按项目隔离）。\n"
                         + "「进入」切换（重启生效）；「删除」移除。可建内部或手机目录（文件管理器可见）。"));
@@ -952,31 +960,34 @@ public class MainActivity extends Activity {
         curView.setTextSize(14);
         curView.setTypeface(null, android.graphics.Typeface.BOLD);
         curView.setPadding(dp(2), dp(8), dp(2), dp(4));
-        panel.addView(curView);
+        addV(panel, curView, 6);
         // 项目列表（内置 + 手机分组渲染，每行 名称/进入/删除；固定高度 + 二级滑动）
+        panel.addView(createDarkSectionTitle("项目列表"));
         final ScrollView listScroll = new ScrollView(this);
         final LinearLayout listBox = new LinearLayout(this);
         listBox.setOrientation(LinearLayout.VERTICAL);
         listScroll.addView(listBox);
-        panel.addView(listScroll, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(360)));
+        LinearLayout.LayoutParams listLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(290));
+        listLp.topMargin = dp(6);
+        panel.addView(listScroll, listLp);
         // 新增区
-        panel.addView(createDarkTip("新建项目：输入名称后选择创建位置"));
+        panel.addView(createDarkSectionTitle("新建项目"));
         final EditText newInput = createDarkEditText("新项目名称（如 myapp，字母数字._-）",
                 InputType.TYPE_CLASS_TEXT);
-        panel.addView(newInput);
+        addV(panel, newInput, 6);
         Button newSdcardBtn = createDarkButton("在手机目录创建并进入");
         newSdcardBtn.setOnClickListener(v -> {
             String name = newInput.getText().toString().trim();
             if (checkProjectName(name)) createProject(name, true, curView, listBox);
         });
-        panel.addView(newSdcardBtn);
+        addV(panel, newSdcardBtn, 8);
         Button newInnerBtn = createDarkButton("在内部创建并进入");
         newInnerBtn.setOnClickListener(v -> {
             String name = newInput.getText().toString().trim();
             if (checkProjectName(name)) createProject(name, false, curView, listBox);
         });
-        panel.addView(newInnerBtn);
+        addV(panel, newInnerBtn, 8);
         Button defaultBtn = createDarkButton("恢复默认（/root）");
         defaultBtn.setOnClickListener(v -> {
             try {
@@ -988,10 +999,10 @@ public class MainActivity extends Activity {
                 Log.e(TAG, "reset project failed", e);
             }
         });
-        panel.addView(defaultBtn);
+        addV(panel, defaultBtn, 8);
         Button refreshBtn = createDarkButton("刷新项目列表");
         refreshBtn.setOnClickListener(v -> loadProjectList(curView, listBox));
-        panel.addView(refreshBtn);
+        addV(panel, refreshBtn, 8);
         loadProjectList(curView, listBox);
         showPanel("项目", panel, null);
     }
@@ -1258,8 +1269,10 @@ public class MainActivity extends Activity {
         chrootWarn.setEllipsize(android.text.TextUtils.TruncateAt.END);
         chrootWarn.setPadding(0, dp(6), 0, dp(2));
         // 固定高度：警告出现/消失/精简不引起功能页内容上下移动
-        panel.addView(chrootWarn, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(60)));
+        LinearLayout.LayoutParams warnLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(60));
+        warnLp.topMargin = dp(6);
+        panel.addView(chrootWarn, warnLp);
 
         // 安装进度区（固化显示且高度固定：空闲/安装中/完成时输出内容变化不引起功能页上下调整）
         LinearLayout progressBox = new LinearLayout(this);
@@ -1308,6 +1321,7 @@ public class MainActivity extends Activity {
         envListAll.addAll(loadCustomEnvs());
         final String[][] envs = envListAll.toArray(new String[0][]);
         // ---- 模板区：下载模板（.rsxmenv）+ 导入模板 ----
+        panel.addView(createDarkSectionTitle("自定义模板"));
         LinearLayout tplRow = new LinearLayout(this);
         tplRow.setOrientation(LinearLayout.HORIZONTAL);
         Button dlBtn = createDarkButton("下载模板");
@@ -1325,17 +1339,22 @@ public class MainActivity extends Activity {
         });
         tplRow.addView(dlBtn, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         tplRow.addView(impBtn, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        panel.addView(tplRow);
-        panel.addView(createDarkTip("模板（.rsxmenv）可自定义环境：下载模板 → 配置 apk 包 → 导入后即可安装。\n"
-                + "chroot=1 的环境需先在 ROOT 面板开启 chroot 模式。"));
+        LinearLayout.LayoutParams tplRowLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        tplRowLp.topMargin = dp(6);
+        panel.addView(tplRow, tplRowLp);
+        addV(panel, createDarkTip("模板（.rsxmenv）可自定义环境：下载模板 → 配置 apk 包 → 导入后即可安装。\n"
+                + "chroot=1 的环境需先在 ROOT 面板开启 chroot 模式。"), 8);
         // ---- 已安装列表（固定高度 + 二级滑动；每行 名称/状态/删除）----
-        panel.addView(createDarkTip("已安装环境（可删除）："));
+        panel.addView(createDarkSectionTitle("已安装环境"));
         final ScrollView envScroll = new ScrollView(this);
         final LinearLayout envList = new LinearLayout(this);
         envList.setOrientation(LinearLayout.VERTICAL);
         envScroll.addView(envList);
-        panel.addView(envScroll, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(220)));
+        LinearLayout.LayoutParams envLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(220));
+        envLp.topMargin = dp(6);
+        panel.addView(envScroll, envLp);
         loadInstalledEnvs(envList, envs, progressBox, progressTitle, progressBar, progressText);
         // 面板重开时若仍有安装任务在后台进行：恢复显示进度区
         String installing = devEnvInstallingName;
@@ -1756,10 +1775,13 @@ public class MainActivity extends Activity {
         et.setTextColor(0xFFFFFFFF);
         et.setHintTextColor(0xFF707070);
         et.setPadding(dp(14), dp(10), dp(14), dp(10));
+        // 统一块状深灰底（与 SKILL 内容输入框一致），替代 Material 下划线，深色面板更清晰
+        et.setBackgroundColor(0xFF1A1A1A);
         return et;
     }
 
-    /** 原生风格按钮（平台 Theme.Material 下自带圆角/波纹，仅覆 tint 为黑灰保持纯黑） */
+    /** 原生风格按钮（平台 Theme.Material 下自带圆角/波纹，仅覆 tint 为黑灰保持纯黑）。
+     *  统一最小高度与内边距：全宽主按钮与行内小按钮观感一致 */
     private Button createDarkButton(String text) {
         Button b = new Button(this);
         b.setText(text);
@@ -1768,16 +1790,39 @@ public class MainActivity extends Activity {
         b.setAllCaps(false);
         // 原生涟漪保留（colorControlHighlight），底色改为黑灰
         b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF262626));
+        b.setMinHeight(dp(42));
+        b.setMinimumHeight(dp(42));
+        b.setPadding(dp(16), 0, dp(16), 0);
         return b;
     }
 
-    /** 深色说明文字 */
+    /** 深色说明文字（12sp 灰，带行距） */
     private TextView createDarkTip(String text) {
         TextView tv = new TextView(this);
         tv.setText(text);
         tv.setTextColor(0xFFAAAAAA);
         tv.setTextSize(12);
+        tv.setLineSpacing(0, 1.3f);
         return tv;
+    }
+
+    /** 深色区块标题（14sp 白 bold，与说明文字层级区分，用于功能页分组） */
+    private TextView createDarkSectionTitle(String text) {
+        TextView tv = new TextView(this);
+        tv.setText(text);
+        tv.setTextColor(0xFFFFFFFF);
+        tv.setTextSize(14);
+        tv.setTypeface(null, android.graphics.Typeface.BOLD);
+        tv.setPadding(0, dp(6), 0, dp(2));
+        return tv;
+    }
+
+    /** 添加子视图并统一顶部间距（功能页排版：元素间固定留白；负值/0 无上边距） */
+    private void addV(LinearLayout panel, View v, float topDp) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        if (topDp > 0) lp.topMargin = dp(topDp);
+        panel.addView(v, lp);
     }
 
     /** 深色代码结果区 */
@@ -1820,22 +1865,23 @@ public class MainActivity extends Activity {
         int pad = dp(16);
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(pad, dp(8), pad, 0);
-        panel.addView(statusLine);
-        panel.addView(tip);
-        panel.addView(pairPort);
-        panel.addView(pairCode);
+        panel.setPadding(pad, dp(8), pad, dp(12));
+        addV(panel, statusLine, 0);
+        addV(panel, tip, 8);
+        panel.addView(createDarkSectionTitle("配对信息"));
+        addV(panel, pairPort, 6);
+        addV(panel, pairCode, 8);
         // 执行结果区（adb 输出实时显示，不依赖 reasonix 会话）
         TextView resultView = createDarkResult();
         resultView.setText("（执行结果将显示在这里）");
-        panel.addView(resultView);
+        addV(panel, resultView, 8);
         // 自动连接按钮：app 直接驱动 guest 内 adb-autoconnect（扫描 30000-49999 并 connect）
         Button autoBtn = createDarkButton("自动连接（免配对直连）");
         autoBtn.setOnClickListener(v -> {
             saveAdbPrefs(prefs, pairPort, pairCode);
             runAdbInGuest("adb-autoconnect", resultView, statusLine);
         });
-        panel.addView(autoBtn);
+        addV(panel, autoBtn, 8);
         // 配对并连接按钮：app 执行配对 + 自动扫描连接端口 + 连接（全程 app 处理）
         Button pairBtn = createDarkButton("配对并连接");
         pairBtn.setOnClickListener(v -> {
@@ -1849,7 +1895,7 @@ public class MainActivity extends Activity {
             }
             runAdbInGuest("adb-dopair " + pp + " " + pc, resultView, statusLine);
         });
-        panel.addView(pairBtn);
+        addV(panel, pairBtn, 8);
         // 复制命令按钮（原对话框 neutral 按钮 → 面板内按钮）
         Button copyBtn = createDarkButton("复制命令");
         copyBtn.setOnClickListener(v -> {
@@ -1864,18 +1910,19 @@ public class MainActivity extends Activity {
                 Log.w(TAG, "clipboard failed", e);
             }
         });
-        panel.addView(copyBtn);
+        addV(panel, copyBtn, 8);
         // Shizuku 支持：依赖 Shizuku 的 adb 权限持久化（替代原「后台保活」；Shizuku 服务常驻，
         // 本应用关闭后仍可经 Shizuku 执行 adb 命令）
+        panel.addView(createDarkSectionTitle("Shizuku 持久化"));
         final TextView szStatus = new TextView(this);
         szStatus.setTextSize(13);
-        szStatus.setPadding(dp(2), dp(10), dp(2), dp(4));
+        szStatus.setPadding(dp(2), dp(2), dp(2), dp(4));
         final boolean szOn = shizukuAvailable();
         szStatus.setText("Shizuku：" + (szOn ? "已授权（adb 权限可用）" : "未授权/未安装"));
         szStatus.setTextColor(szOn ? 0xFF4CAF50 : 0xFFFFD54F);
-        panel.addView(szStatus);
-        panel.addView(createDarkTip(
-                "Shizuku 授权后 adb 命令以其权限执行，关闭本应用仍可用（替代后台保活）。"));
+        addV(panel, szStatus, 6);
+        addV(panel, createDarkTip(
+                "Shizuku 授权后 adb 命令以其权限执行，关闭本应用仍可用（替代后台保活）。"), 6);
         Button szBtn = createDarkButton(szOn
                 ? "通过 Shizuku 持久化 adb（启动 adb server）" : "Shizuku 授权（打开授权页）");
         szBtn.setOnClickListener(v -> {
@@ -1895,7 +1942,7 @@ public class MainActivity extends Activity {
                 requestShizukuPermission();
             }
         });
-        panel.addView(szBtn);
+        addV(panel, szBtn, 8);
         // 全屏面板展示（取代系统弹窗，避免遮挡控件）
         showPanel("ADB 调试", panel, this::stopAdbStatusRefresh);
         // 状态实时刷新：面板打开期间每 4 秒用 adb devices 检查真实连接（防快照过期）
@@ -2317,20 +2364,33 @@ public class MainActivity extends Activity {
         if (!current.isEmpty()) input.setText(current);
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(16), dp(8), dp(16), 0);
+        panel.setPadding(dp(16), dp(8), dp(16), dp(12));
         panel.addView(createDarkTip("模型与 API Key（api.deepseek.com）。切换模型保存后重启环境生效。"));
         // 模型选择
-        TextView modelLabel = new TextView(this);
-        modelLabel.setText("选择模型：");
-        modelLabel.setTextColor(0xFFAAAAAA);
-        modelLabel.setTextSize(13);
-        panel.addView(modelLabel);
+        panel.addView(createDarkSectionTitle("选择模型"));
         final Spinner modelSpinner = new Spinner(this);
-        modelSpinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, display));
+        // 深色适配：选中项白字、块状深灰底（与输入框一致），下拉项白字
+        ArrayAdapter<String> spinnerAdapter = new ArrayAdapter<String>(
+                this, android.R.layout.simple_spinner_item, display) {
+            @Override
+            public android.view.View getView(int pos, android.view.View cv, ViewGroup parent) {
+                TextView tv = (TextView) super.getView(pos, cv, parent);
+                tv.setTextColor(0xFFFFFFFF);
+                tv.setTextSize(14);
+                tv.setPadding(dp(14), dp(10), dp(14), dp(10));
+                tv.setBackgroundColor(0xFF1A1A1A);
+                return tv;
+            }
+        };
+        spinnerAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        modelSpinner.setAdapter(spinnerAdapter);
         modelSpinner.setSelection(curIdx);
-        panel.addView(modelSpinner, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
-        panel.addView(input);
+        LinearLayout.LayoutParams spinnerLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
+        spinnerLp.topMargin = dp(6);
+        panel.addView(modelSpinner, spinnerLp);
+        panel.addView(createDarkSectionTitle("API Key"));
+        addV(panel, input, 6);
         addRechargeGuide(panel);
         Button saveBtn = createDarkButton("保存");
         saveBtn.setOnClickListener(v -> {
@@ -2355,7 +2415,7 @@ public class MainActivity extends Activity {
                 Log.e(TAG, "save api key failed", e);
             }
         });
-        panel.addView(saveBtn);
+        addV(panel, saveBtn, 10);
         // 全屏面板展示（取代系统弹窗，避免遮挡控件）
         showPanel("API Key", panel, null);
     }
@@ -2390,7 +2450,7 @@ public class MainActivity extends Activity {
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
         int pad = dp(16);
-        panel.setPadding(pad, dp(8), pad, 0);
+        panel.setPadding(pad, dp(8), pad, dp(12));
         // 当前版本：优先显示记录的 npm 版本（.npm-version），否则从 Go buildinfo 提取
         String npmVer = null;
         File vf = new File(new File(new File(getFilesDir(), "rootfs/root"), ".reasonix"), ".npm-version");
@@ -2406,7 +2466,7 @@ public class MainActivity extends Activity {
         verView.setTextColor(0xFF7FDB8A);
         verView.setTextSize(14);
         verView.setTypeface(null, android.graphics.Typeface.BOLD);
-        panel.addView(verView);
+        addV(panel, verView, 0);
         // 异步查询最新版本并自动填入最新下载链接
         final String curVer = ver;
         new Thread(() -> {
@@ -2435,8 +2495,9 @@ public class MainActivity extends Activity {
         }, "rx-ver-check").start();
         TextView tip = createDarkTip("官方源 @reasonix/cli-linux-arm64（npm 平台包）。\n"
                 + "可改链接更新、选文件更新或恢复内置版本。");
-        panel.addView(tip);
-        panel.addView(urlInput);
+        addV(panel, tip, 8);
+        panel.addView(createDarkSectionTitle("更新方式"));
+        addV(panel, urlInput, 6);
         Button netBtn = createDarkButton("网络更新");
         netBtn.setOnClickListener(v -> {
             String url = urlInput.getText().toString().trim();
@@ -2445,7 +2506,7 @@ public class MainActivity extends Activity {
                 updateFromNetwork(url);
             }
         });
-        panel.addView(netBtn);
+        addV(panel, netBtn, 8);
         Button fileBtn = createDarkButton("选择文件");
         fileBtn.setOnClickListener(v -> {
             try {
@@ -2457,13 +2518,13 @@ public class MainActivity extends Activity {
                 Log.e(TAG, "open document failed", e);
             }
         });
-        panel.addView(fileBtn);
+        addV(panel, fileBtn, 8);
         Button restoreBtn = createDarkButton("恢复内置");
         restoreBtn.setOnClickListener(v -> {
             hidePanel();
             restoreBundledResonix();
         });
-        panel.addView(restoreBtn);
+        addV(panel, restoreBtn, 8);
         // 全屏面板展示（取代系统弹窗，避免遮挡控件）
         showPanel("更新 Reasonix", panel, null);
     }
@@ -2684,7 +2745,7 @@ public class MainActivity extends Activity {
                 // 全屏面板引导（取代系统弹窗，避免遮挡控件）
                 LinearLayout panel = new LinearLayout(this);
                 panel.setOrientation(LinearLayout.VERTICAL);
-                panel.setPadding(dp(16), dp(8), dp(16), 0);
+                panel.setPadding(dp(16), dp(8), dp(16), dp(12));
                 panel.addView(createDarkTip("reasonix 需要\"所有文件访问\"权限才能读写手机存储的任意位置"
                         + "（文档、下载、非媒体文件等）。\n\n未授权时仅可访问公共媒体目录。"));
                 Button grantBtn = createDarkButton("去授权");
@@ -2692,10 +2753,10 @@ public class MainActivity extends Activity {
                     hidePanel();
                     openManageAllFilesSettings();
                 });
-                panel.addView(grantBtn);
+                addV(panel, grantBtn, 12);
                 Button laterBtn = createDarkButton("暂不");
                 laterBtn.setOnClickListener(v -> hidePanel());
-                panel.addView(laterBtn);
+                addV(panel, laterBtn, 8);
                 showPanel("存储权限", panel, null);
             }
         }
