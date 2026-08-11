@@ -43,6 +43,10 @@ android {
 dependencies {
     // DrawerLayout（侧滑菜单）
     implementation 'androidx.drawerlayout:drawerlayout:1.2.0'
+    // Shizuku：以 Shizuku 的 adb/root 权限执行命令，持久化 adb（app 关闭后仍可用，替代保活）。
+    // 用 12.x（provider 独立模块随 APK 打包，未装 Shizuku 的设备不崩溃）
+    implementation 'dev.rikka.shizuku:api:12.1.0'
+    implementation 'dev.rikka.shizuku:provider:12.1.0'
     // 不引入 Material Components 库（体积大）：使用平台原生 android:Theme.Material
     // 主题 + 原生控件，即可获得安卓原生 Material 风格，保持应用轻量化。
 }

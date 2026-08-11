@@ -52,6 +52,8 @@ import java.util.zip.GZIPInputStream;
 import androidx.core.view.GravityCompat;
 import androidx.drawerlayout.widget.DrawerLayout;
 
+import rikka.shizuku.Shizuku;
+
 /**
  * Reasonix Proot —— 在 Android 上通过 proot 运行 Alpine Linux 环境，
  * 启动后自动进入 reasonix AI 编码助手（TUI）。
@@ -324,6 +326,10 @@ public class MainActivity extends Activity {
             hidePanel();
             restartEnvironment();
         });
+        // chroot 需要 root 授权：先置灰，root-check 检测通过后恢复；无 root 保持禁用并提示
+        modeBtn.setEnabled(false);
+        modeBtn.setTextColor(0xFF6A6A6A);
+        modeBtn.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF1E1E1E));
         panel.addView(modeBtn);
         // 全屏面板展示（取代系统弹窗，避免遮挡控件）
         showPanel("root", panel, null);
@@ -341,6 +347,15 @@ public class MainActivity extends Activity {
             runOnUiThread(() -> {
                 status.setText(st);
                 status.setTextColor(st.contains("已授权") ? 0xFF7FDB8A : (st.contains("未检测") ? 0xFF888888 : 0xFFFFD54F));
+                // chroot 按钮：root 可用才恢复（chroot 需 su 授权）
+                if (st.contains("已授权")) {
+                    modeBtn.setEnabled(true);
+                    modeBtn.setTextColor(0xFFFFFFFF);
+                    modeBtn.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF262626));
+                } else {
+                    modeTip.setText(modeTip.getText() + "\n⚠ chroot 需要 root 授权，当前未检测到可用 root，切换按钮不可用。");
+                    modeTip.setTextColor(0xFFFF6B6B);
+                }
             });
         }, "root-check").start();
         testBtn.setOnClickListener(v -> {
@@ -867,16 +882,21 @@ public class MainActivity extends Activity {
                 "一键安装常用开发环境（基于 Alpine 包管理器，需联网）。\n"
                         + "点击后后台自动安装，进度实时显示在下方；大环境（Android/Go）耗时较长。"));
 
-        // root 检测（异步，su 实际可执行才算有 root）：安装/运行依赖 root 绕过 Android SELinux 限制
-        // （JVM 需可执行内存权限、apk 需硬链接权限），无 root 时所有环境按钮置灰不可用并提示。
-        // 检测前按钮先按置灰创建，避免误点；检测到 root 后恢复。
-        final TextView rootWarn = new TextView(this);
-        rootWarn.setText("⏳ 正在检测 root 权限...");
-        rootWarn.setTextColor(0xFFAAAAAA);
-        rootWarn.setTextSize(13);
-        rootWarn.setLineSpacing(0, 1.2f);
-        rootWarn.setPadding(0, dp(10), 0, dp(6));
-        panel.addView(rootWarn);
+        // chroot 检测：Android 开发依赖 chroot 运行模式（JVM 需 root 域，proot + SELinux
+        // enforcing 下 mprotect RWX 被拒无法启动）；未开启 chroot 时置灰并提示。
+        // Python/Node/Go/C-C++/通用工具不依赖 chroot，保持可用。
+        final boolean chrootOn = isChrootMode();
+        final TextView chrootWarn = new TextView(this);
+        chrootWarn.setText(chrootOn ? ""
+                : "⚠ 未开启 chroot 运行模式。\n"
+                + "Android 开发依赖 chroot（JVM 需 root 域，proot + SELinux enforcing 下无法启动），已置灰。\n"
+                + "请先在侧滑栏 root 面板「切换为 chroot 模式」（需 root 授权）。\n"
+                + "Python/Node.js/Go/C-C++/通用工具不依赖 chroot，可直接安装使用。");
+        chrootWarn.setTextColor(chrootOn ? 0xFFAAAAAA : 0xFFFF6B6B);
+        chrootWarn.setTextSize(13);
+        chrootWarn.setLineSpacing(0, 1.2f);
+        chrootWarn.setPadding(0, dp(10), 0, dp(6));
+        panel.addView(chrootWarn);
 
         // 安装进度区（初始隐藏，点击安装后显示；安装期间禁用所有按钮防止并发覆盖状态文件）
         LinearLayout progressBox = new LinearLayout(this);
@@ -900,9 +920,9 @@ public class MainActivity extends Activity {
         progressBox.addView(progressText);
         panel.addView(progressBox);
 
-        // envs 第 4 列：是否依赖 root。实测（enforcing）仅 Android 开发依赖
-        // （JVM 需 execmem，SELinux enforcing 下 mprotect RWX 被拒无法启动）；
-        // Python/Node/Go/C-C++/通用工具 安装与运行均无需 root。
+        // envs 第 4 列：是否依赖 chroot 运行模式。实测仅 Android 开发依赖
+        // （JVM 需 root 域 execmem，proot + SELinux enforcing 下 mprotect RWX 被拒无法启动）；
+        // Python/Node/Go/C-C++/通用工具 安装与运行均不依赖。
         String[][] envs = {
                 {"Android 开发", "openjdk17-jdk gradle android-tools",
                         "JDK17 + Gradle + adb/fastboot（安卓应用构建）", "1"},
@@ -916,54 +936,18 @@ public class MainActivity extends Activity {
         for (int i = 0; i < envs.length; i++) {
             final String[] e = envs[i];
             Button b = createDarkButton(e[0] + "  ｜  " + e[2]);
-            // 初始置灰不可用（root 检测通过后恢复）
-            b.setEnabled(false);
-            b.setTextColor(0xFF6A6A6A);
-            b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF1E1E1E));
+            if (!chrootOn && "1".equals(e[3])) {
+                // 依赖 chroot 但未开启：置灰不可用（灰色文字 + 更暗背景）
+                b.setEnabled(false);
+                b.setTextColor(0xFF6A6A6A);
+                b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF1E1E1E));
+            } else {
+                b.setOnClickListener(v -> installDevEnv(e[0], e[1], b, buttons,
+                        progressBox, progressTitle, progressBar, progressText));
+            }
             panel.addView(b);
             buttons[i] = b;
         }
-        // 异步检测 root 可用性（su 实际可执行而非仅文件存在；KernelSU/Magisk 已授权才可执行）
-        new Thread(() -> {
-            boolean rootOk = isRootAvailable();
-            runOnUiThread(() -> {
-                if (rootOk) {
-                    rootWarn.setVisibility(View.GONE);
-                    // 无安装任务在跑才恢复按钮；有任务保持禁用（进度区已显示）
-                    if (devEnvInstallingName == null) {
-                        for (int i = 0; i < envs.length; i++) {
-                            final String[] e = envs[i];
-                            Button b = buttons[i];
-                            b.setEnabled(true);
-                            b.setTextColor(0xFFFFFFFF);
-                            b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF262626));
-                            b.setOnClickListener(v -> installDevEnv(e[0], e[1], b, buttons,
-                                    progressBox, progressTitle, progressBar, progressText));
-                        }
-                    }
-                } else {
-                    // 无 root：仅依赖 root 的环境保持置灰，其余恢复可用（实测不需要 root）
-                    rootWarn.setText("⚠ 未检测到可用的 root 权限（KernelSU/Magisk 未授权）。\n"
-                            + "Android 开发依赖 root（JVM 需可执行内存权限，\n"
-                            + "SELinux enforcing 下无法启动），已置灰。\n"
-                            + "Python/Node.js/Go/C-C++/通用工具无需 root，可直接安装使用。");
-                    rootWarn.setTextColor(0xFFFF6B6B);
-                    if (devEnvInstallingName == null) {
-                        for (int i = 0; i < envs.length; i++) {
-                            final String[] e = envs[i];
-                            Button b = buttons[i];
-                            if ("0".equals(e[3])) {   // 不依赖 root：恢复可用
-                                b.setEnabled(true);
-                                b.setTextColor(0xFFFFFFFF);
-                                b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF262626));
-                                b.setOnClickListener(v -> installDevEnv(e[0], e[1], b, buttons,
-                                        progressBox, progressTitle, progressBar, progressText));
-                            }
-                        }
-                    }
-                }
-            });
-        }, "dev-env-root-check").start();
         // 面板重开时若仍有安装任务在后台进行：恢复显示进度区并禁用全部按钮
         String installing = devEnvInstallingName;
         if (installing != null) {
@@ -1179,7 +1163,6 @@ public class MainActivity extends Activity {
         Button autoBtn = createDarkButton("自动连接（免配对直连）");
         autoBtn.setOnClickListener(v -> {
             saveAdbPrefs(prefs, pairPort, pairCode);
-            startAdbKeepAlive();   // 后台保活：滑动关闭应用后 adb 连接保持
             runAdbInGuest("adb-autoconnect", resultView, statusLine);
         });
         panel.addView(autoBtn);
@@ -1194,7 +1177,6 @@ public class MainActivity extends Activity {
                 resultView.setText("请先在手机上开启「无线调试」，抄下配对端口和 6 位配对码后填写。");
                 return;
             }
-            startAdbKeepAlive();   // 后台保活：滑动关闭应用后 adb 连接保持
             runAdbInGuest("adb-dopair " + pp + " " + pc, resultView, statusLine);
         });
         panel.addView(pairBtn);
@@ -1213,25 +1195,38 @@ public class MainActivity extends Activity {
             }
         });
         panel.addView(copyBtn);
-        // ADB 后台保活状态与控制（前台服务：滑动关闭应用后连接保持）
-        final TextView kaStatus = new TextView(this);
-        kaStatus.setTextColor(0xFF4CAF50);
-        kaStatus.setTextSize(13);
-        kaStatus.setPadding(dp(2), dp(10), dp(2), dp(4));
-        kaStatus.setText("后台保活：" + (getSharedPreferences("prefs", MODE_PRIVATE)
-                .getBoolean("adb_keepalive", false)
-                ? "开启（关闭应用后连接保持）" : "未开启（连接成功后自动开启）"));
-        panel.addView(kaStatus);
+        // Shizuku 支持：依赖 Shizuku 的 adb 权限持久化（替代原「后台保活」；Shizuku 服务常驻，
+        // 本应用关闭后仍可经 Shizuku 执行 adb 命令）
+        final TextView szStatus = new TextView(this);
+        szStatus.setTextSize(13);
+        szStatus.setPadding(dp(2), dp(10), dp(2), dp(4));
+        final boolean szOn = shizukuAvailable();
+        szStatus.setText("Shizuku：" + (szOn ? "已授权（adb 权限可用）" : "未授权/未安装"));
+        szStatus.setTextColor(szOn ? 0xFF4CAF50 : 0xFFFFD54F);
+        panel.addView(szStatus);
         panel.addView(createDarkTip(
-                "保活提示：请勿用「一键清理/强制停止」关闭应用，否则前台服务被系统终止、adb 连接会断开；"
-                        + "从最近任务划掉应用不影响连接。"));
-        Button stopKaBtn = createDarkButton("停止 ADB 后台保活");
-        stopKaBtn.setOnClickListener(v -> {
-            stopAdbKeepAlive();
-            kaStatus.setText("后台保活：未开启");
-            pushOutput("\r\n[已停止 ADB 后台保活，滑动关闭应用后连接将断开]\r\n");
+                "Shizuku 模式：授权后 adb 命令以 Shizuku 权限执行（无需 root、无需本应用保活），\n"
+                        + "关闭本应用后仍可通过 Shizuku 持久化使用 adb（替代原「后台保活」）。"));
+        Button szBtn = createDarkButton(szOn
+                ? "通过 Shizuku 持久化 adb（启动 adb server）" : "Shizuku 授权（打开授权页）");
+        szBtn.setOnClickListener(v -> {
+            if (shizukuAvailable()) {
+                resultView.setTextColor(0xFFFFD54F);
+                resultView.setText("通过 Shizuku 启动 adb server（持久化）...\n");
+                new Thread(() -> {
+                    String out = execViaShizuku("adb start-server 2>&1; adb devices 2>&1", 30);
+                    runOnUiThread(() -> {
+                        resultView.setTextColor(0xFF7FDB8A);
+                        resultView.setText("Shizuku adb server 已启动（Shizuku 保持，持久化）：\n" + out);
+                        szStatus.setText("Shizuku：已授权（adb 权限可用）");
+                        szStatus.setTextColor(0xFF4CAF50);
+                    });
+                }, "shizuku-adb").start();
+            } else {
+                requestShizukuPermission();
+            }
         });
-        panel.addView(stopKaBtn);
+        panel.addView(szBtn);
         // 全屏面板展示（取代系统弹窗，避免遮挡控件）
         showPanel("ADB 无线调试", panel, this::stopAdbStatusRefresh);
         // 状态实时刷新：面板打开期间每 4 秒用 adb devices 检查真实连接（防快照过期）
@@ -1240,8 +1235,6 @@ public class MainActivity extends Activity {
         if (status.contains("未知")) {
             statusLine.postDelayed(() -> runAdbInGuest("adb-autoconnect", resultView, statusLine), 600);
         }
-        // 已连接则确保后台保活开启（防面板未操作时连接状态不触发保活）
-        if (readAdbStatus().contains("已连接")) startAdbKeepAlive();
     }
 
     /** ADB 状态定时刷新：面板打开期间每 4 秒检查 adb devices 真实状态（防快照过期显示不符） */
@@ -1264,7 +1257,6 @@ public class MainActivity extends Activity {
                     }
                     if (wifiOff) {
                         st = "系统无线调试未开启（请到 设置→开发者选项→无线调试 打开）";
-                        runOnUiThread(() -> stopAdbKeepAlive());   // 无线调试关闭，保活无意义
                     } else {
                         try {
                             String out = executeInGuest("adb devices 2>&1", 6);
@@ -1375,27 +1367,48 @@ public class MainActivity extends Activity {
         }
     }
 
-    /** 启动 ADB 后台保活（前台服务）：滑动关闭应用后进程不被回收，adb 连接保持 */
-    private void startAdbKeepAlive() {
-        getSharedPreferences("prefs", MODE_PRIVATE).edit().putBoolean("adb_keepalive", true).apply();
+    /** Shizuku 可用性：binder 存活且已授权（adb/root 权限） */
+    private boolean shizukuAvailable() {
         try {
-            Intent i = new Intent(this, AdbKeepAliveService.class);
-            if (Build.VERSION.SDK_INT >= 26) startForegroundService(i);
-            else startService(i);
-            Log.d(TAG, "adb keepalive service started");
+            return Shizuku.pingBinder()
+                    && Shizuku.checkSelfPermission() == android.content.pm.PackageManager.PERMISSION_GRANTED;
         } catch (Exception e) {
-            Log.w(TAG, "start adb keepalive failed", e);
+            Log.w(TAG, "shizuku check failed", e);
+            return false;
         }
     }
 
-    /** 停止 ADB 后台保活 */
-    private void stopAdbKeepAlive() {
-        getSharedPreferences("prefs", MODE_PRIVATE).edit().putBoolean("adb_keepalive", false).apply();
+    /** 经 Shizuku 权限执行 shell 命令（adb 权限；Shizuku 服务常驻 → 持久化，不依赖本应用存活） */
+    private String execViaShizuku(String cmd, int timeoutSec) {
         try {
-            stopService(new Intent(this, AdbKeepAliveService.class));
-            Log.d(TAG, "adb keepalive service stopped");
+            Process p = Shizuku.newProcess(new String[]{"sh", "-c", cmd}, null, null);
+            StringBuilder sb = new StringBuilder();
+            byte[] buf = new byte[4096];
+            long deadline = System.currentTimeMillis() + timeoutSec * 1000L;
+            try (InputStream in = p.getInputStream()) {
+                while (System.currentTimeMillis() < deadline) {
+                    int n = in.read(buf);
+                    if (n < 0) break;
+                    if (n > 0) sb.append(new String(buf, 0, n, StandardCharsets.UTF_8));
+                }
+            }
+            return sb.toString().trim();
         } catch (Exception e) {
-            Log.w(TAG, "stop adb keepalive failed", e);
+            Log.w(TAG, "shizuku exec failed", e);
+            return null;
+        }
+    }
+
+    /** 请求 Shizuku 授权（打开 Shizuku Manager 授权页）；未安装时给出提示 */
+    private void requestShizukuPermission() {
+        try {
+            Intent intent = new Intent("moe.shizuku.manager.intent.action.REQUEST_PERMISSION");
+            intent.setPackage("moe.shizuku.manager");
+            intent.putExtra("moe.shizuku.manager.intent.extra.APP_UID", getApplicationInfo().uid);
+            startActivity(intent);
+        } catch (Exception e) {
+            Log.w(TAG, "request shizuku permission failed", e);
+            pushOutput("\r\n[Shizuku Manager 未安装，请先安装 Shizuku（GitHub: RikkaApps/Shizuku）后再授权]\r\n");
         }
     }
 
@@ -1415,7 +1428,6 @@ public class MainActivity extends Activity {
                     statusLine.setText("连接状态：" + st);
                     statusLine.setTextColor(st.contains("已连接") ? 0xFF7FDB8A
                             : (st.contains("需配对") ? 0xFFFFD54F : 0xFFCCCCCC));
-                    if (st.contains("已连接")) startAdbKeepAlive();  // 连接成功自动开启后台保活
                 }
             });
         }, "adb-exec").start();
@@ -1851,20 +1863,6 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         flushPendingOutput();   // 前台恢复：冲刷后台期间缓存的终端输出
-        // 系统无线调试开关联动：已关闭时停止保活（避免"保持中"通知误导）
-        new Thread(() -> {
-            try {
-                String wd = execRootCommand("settings get global adb_wifi_enabled", 4);
-                if (wd != null && wd.trim().equals("0")
-                        && getSharedPreferences("prefs", MODE_PRIVATE).getBoolean("adb_keepalive", false)) {
-                    runOnUiThread(() -> {
-                        stopAdbKeepAlive();
-                        pushOutput("\r\n[检测到系统无线调试已关闭，已停止 ADB 后台保活]\r\n");
-                    });
-                }
-            } catch (Exception ignored) {
-            }
-        }, "adb-wifi-check").start();
         SharedPreferences prefs = getSharedPreferences("prefs", MODE_PRIVATE);
         // 后台运行模式：冻结一切自动前台操作（弹窗/重启），避免抢占其他应用前台
         // （adb-open-moments-summary.md 坑 4：守护界面抢回前台导致 UI 自动化窗口期过短）

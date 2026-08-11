@@ -52,10 +52,13 @@
             android:name=".BackgroundService"
             android:exported="false"
             android:foregroundServiceType="specialUse" />
-        <!-- ADB 无线调试保活服务：滑动关闭应用后连接保持（前台服务防进程回收） -->
-        <service
-            android:name=".AdbKeepAliveService"
-            android:exported="false"
-            android:foregroundServiceType="specialUse" />
+        <!-- Shizuku 客户端权限提供方（Shizuku API 必需；12.x provider 随 APK 打包，未装 Shizuku 不崩溃） -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:multiprocess="false"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
     </application>
 </manifest>
