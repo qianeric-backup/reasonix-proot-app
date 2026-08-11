@@ -923,14 +923,15 @@ public class MainActivity extends Activity {
         // envs 第 4 列：是否依赖 chroot 运行模式。实测仅 Android 开发依赖
         // （JVM 需 root 域 execmem，proot + SELinux enforcing 下 mprotect RWX 被拒无法启动）；
         // Python/Node/Go/C-C++/通用工具 安装与运行均不依赖。
+        // envs 第 5 列：关键命令（安装前检测半装：数据库标记已装但文件缺失 → 自动清理重装）
         String[][] envs = {
                 {"Android 开发", "openjdk17-jdk gradle android-tools",
-                        "JDK17 + Gradle + adb/fastboot（安卓应用构建）", "1"},
-                {"Python 开发", "python3 py3-pip", "Python3 + pip", "0"},
-                {"Node.js", "nodejs npm", "Node.js + npm", "0"},
-                {"Go 开发", "go", "Go 语言工具链", "0"},
-                {"C/C++ 开发", "gcc g++ make musl-dev", "GCC/G++ + Make + 头文件", "0"},
-                {"通用工具", "git vim curl wget zip unzip", "Git/Vim/curl/wget 等", "0"},
+                        "JDK17 + Gradle + adb/fastboot（安卓应用构建）", "1", "java gradle adb"},
+                {"Python 开发", "python3 py3-pip", "Python3 + pip", "0", "python3 pip3"},
+                {"Node.js", "nodejs npm", "Node.js + npm", "0", "node npm"},
+                {"Go 开发", "go", "Go 语言工具链", "0", "go"},
+                {"C/C++ 开发", "gcc g++ make musl-dev", "GCC/G++ + Make + 头文件", "0", "gcc g++ make"},
+                {"通用工具", "git vim curl wget zip unzip", "Git/Vim/curl/wget 等", "0", "git vim curl wget zip unzip"},
         };
         final Button[] buttons = new Button[envs.length];
         for (int i = 0; i < envs.length; i++) {
@@ -942,7 +943,7 @@ public class MainActivity extends Activity {
                 b.setTextColor(0xFF6A6A6A);
                 b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF1E1E1E));
             } else {
-                b.setOnClickListener(v -> installDevEnv(e[0], e[1], b, buttons,
+                b.setOnClickListener(v -> installDevEnv(e[0], e[1], e[4], b, buttons,
                         progressBox, progressTitle, progressBar, progressText));
             }
             panel.addView(b);
@@ -964,7 +965,7 @@ public class MainActivity extends Activity {
 
     /** 安装开发环境：guest 内 nohup 后台 apk add（防服务循环 20s timeout 杀掉长安装），
      *  轮询状态文件报告结果，并解析 apk 日志 (x/N) 实时刷新面板进度条 */
-    private void installDevEnv(String name, String packages, Button btn, Button[] allBtns,
+    private void installDevEnv(String name, String packages, String keyCmds, Button btn, Button[] allBtns,
                                View progressBox, TextView progressTitle, ProgressBar progressBar,
                                TextView progressText) {
         if (devEnvInstalling) {
@@ -987,10 +988,18 @@ public class MainActivity extends Activity {
         new Thread(() -> {
             try {
                 // 安装脚本经 base64 写入 guest（服务循环用 sh -c "$CMD" 执行，命令内不能含双引号），
-                // 再 nohup 后台执行，避免 20s timeout 杀掉长安装
+                // 再 nohup 后台执行，避免 20s timeout 杀掉长安装。
+                // 半装自动修复：关键命令缺失（apk 数据库标记已装但文件中断缺失，如 libjli.so/二进制丢失）
+                // 时先 apk del 清理残留再全新安装，避免 apk add 因"已装"直接跳过导致环境不可用。
                 String script = "#!/bin/sh\n"
                         + "apk update > /root/.env-install.log 2>&1\n"
                         + "echo \"--- 安装 " + name + " ---\" >> /root/.env-install.log\n"
+                        + "NEED=0\n"
+                        + "for c in " + keyCmds + "; do command -v $c >/dev/null 2>&1 || NEED=1; done\n"
+                        + "if [ $NEED = 1 ]; then\n"
+                        + "  echo \"[检测到安装不完整，清理残留后重新安装]\" >> /root/.env-install.log\n"
+                        + "  apk del " + packages + " >> /root/.env-install.log 2>&1\n"
+                        + "fi\n"
                         + "apk add --no-cache " + packages + " >> /root/.env-install.log 2>&1\n"
                         + "echo INSTALL_DONE_$? > /root/.env-done\n";
                 String b64 = Base64.encodeToString(script.getBytes("UTF-8"), Base64.NO_WRAP);
