@@ -824,20 +824,20 @@ public class MainActivity extends Activity {
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(dp(16), dp(8), dp(16), 0);
         panel.addView(createDarkTip(
-                "项目是 reasonix 的工作目录，AI 会话、记忆、历史按项目隔离。\n"
-                        + "可新建在内部（rootfs）或手机目录（/sdcard/ReasonixProjects，文件管理器可见）。\n"
-                        + "切换/新建后自动重启 reasonix 进入该项目（当前会话会结束）。"));
+                "项目是 reasonix 的工作目录（AI 会话/记忆按项目隔离），可建在内部（rootfs）或\n"
+                        + "手机目录（/sdcard/ReasonixProjects，文件管理器可见）。\n"
+                        + "点「进入」切换目录（自动重启 reasonix 生效）；「删除」移除该目录。"));
         final TextView curView = new TextView(this);
         curView.setTextColor(0xFF4CAF50);
         curView.setTextSize(14);
         curView.setTypeface(null, android.graphics.Typeface.BOLD);
         curView.setPadding(dp(2), dp(8), dp(2), dp(4));
         panel.addView(curView);
-        final TextView listView = new TextView(this);
-        listView.setTextColor(0xFFCCCCCC);
-        listView.setTextSize(12);
-        listView.setPadding(dp(2), dp(4), dp(2), dp(8));
-        panel.addView(listView);
+        // 项目列表（内置 + 手机分组渲染，每行 名称/进入/删除）
+        final LinearLayout listBox = new LinearLayout(this);
+        listBox.setOrientation(LinearLayout.VERTICAL);
+        panel.addView(listBox);
+        // 新增区
         panel.addView(createDarkTip("新建项目：输入名称后选择创建位置"));
         final EditText newInput = createDarkEditText("新项目名称（如 myapp，字母数字._-）",
                 InputType.TYPE_CLASS_TEXT);
@@ -845,52 +845,171 @@ public class MainActivity extends Activity {
         Button newSdcardBtn = createDarkButton("在手机目录创建并进入");
         newSdcardBtn.setOnClickListener(v -> {
             String name = newInput.getText().toString().trim();
-            if (!checkProjectName(name)) return;
-            createProject(name, true);
+            if (checkProjectName(name)) createProject(name, true, curView, listBox);
         });
         panel.addView(newSdcardBtn);
         Button newInnerBtn = createDarkButton("在内部创建并进入");
         newInnerBtn.setOnClickListener(v -> {
             String name = newInput.getText().toString().trim();
-            if (!checkProjectName(name)) return;
-            createProject(name, false);
+            if (checkProjectName(name)) createProject(name, false, curView, listBox);
         });
         panel.addView(newInnerBtn);
-        panel.addView(createDarkTip("切换：也可直接输入完整路径（如 /root/xxx 或 /sdcard/ReasonixProjects/xxx）"));
-        final EditText pathInput = createDarkEditText("项目路径（如 /root/myapp）", InputType.TYPE_CLASS_TEXT);
-        panel.addView(pathInput);
-        Button switchBtn = createDarkButton("切换到该路径并重启");
-        switchBtn.setOnClickListener(v -> {
-            String path = pathInput.getText().toString().trim();
-            if (path.isEmpty()) {
-                pushOutput("\r\n[请输入项目路径]\r\n");
-                return;
-            }
-            if (!path.startsWith("/")) path = "/root/" + path;
-            if (!path.matches("[/A-Za-z0-9_.-]+")) {
-                pushOutput("\r\n[路径仅允许字母、数字、_ . - /]\r\n");
-                return;
-            }
-            switchProject(path);
-        });
-        panel.addView(switchBtn);
         Button defaultBtn = createDarkButton("恢复默认（/root）");
         defaultBtn.setOnClickListener(v -> {
             try {
                 File rootDir = new File(new File(getFilesDir(), "rootfs"), "root");
                 new File(rootDir, ".rsxm-project").delete();
                 pushOutput("\r\n[已恢复默认项目 /root，重启后生效]\r\n");
-                refreshProjectViews(curView, listView);
+                loadProjectList(curView, listBox);
             } catch (Exception e) {
                 Log.e(TAG, "reset project failed", e);
             }
         });
         panel.addView(defaultBtn);
         Button refreshBtn = createDarkButton("刷新项目列表");
-        refreshBtn.setOnClickListener(v -> refreshProjectViews(curView, listView));
+        refreshBtn.setOnClickListener(v -> loadProjectList(curView, listBox));
         panel.addView(refreshBtn);
-        refreshProjectViews(curView, listView);
+        loadProjectList(curView, listBox);
         showPanel("项目", panel, null);
+    }
+
+    /** 加载项目列表（内置 /root 与手机 /sdcard/ReasonixProjects），渲染到容器 */
+    private void loadProjectList(TextView curView, LinearLayout container) {
+        container.removeAllViews();
+        container.addView(createDarkTip("加载中..."));
+        new Thread(() -> {
+            try {
+                File rootDir = new File(new File(getFilesDir(), "rootfs"), "root");
+                String cur = "默认（/root）";
+                File mark = new File(rootDir, ".rsxm-project");
+                if (mark.exists()) {
+                    String s = new String(java.nio.file.Files.readAllBytes(mark.toPath()),
+                            StandardCharsets.UTF_8).trim();
+                    if (!s.isEmpty()) cur = s;
+                }
+                // 内置项目 = /root/ 下用户创建的目录（~/.reasonix/projects/ 是 reasonix 自动生成的
+                // 项目元数据/会话目录，手机项目也会触发，不再混入列表）
+                String out = executeInGuest(
+                        "echo [内部]:; ls -d /root/*/ 2>/dev/null | sed 's|/root/||; s|/$||';", 10);
+                final List<String> inner = new ArrayList<>();
+                final List<String> sdcard = new ArrayList<>();
+                if (out != null) {
+                    boolean inInner = false;
+                    for (String l : out.split("\n")) {
+                        String t = l.trim();
+                        if (t.equals("[内部]:")) { inInner = true; continue; }
+                        if (inInner && !t.isEmpty() && !t.contains("error")) inner.add(t);
+                    }
+                }
+                // 手机目录：宿主侧直接读真存储（chroot 内写 /sdcard 会被 mount namespace 隔离，
+                // 宿主文件管理器不可见；宿主 File API 读写才是文件管理器可见的目录）
+                File sdcardProj = new File("/storage/emulated/0/ReasonixProjects");
+                if (sdcardProj.isDirectory()) {
+                    String[] list = sdcardProj.list();
+                    if (list != null) {
+                        for (String n : list) {
+                            if (!n.startsWith(".")) sdcard.add(n);
+                        }
+                    }
+                }
+                final String c = cur;
+                runOnUiThread(() -> {
+                    curView.setText("当前项目：" + c);
+                    renderProjectList(container, inner, sdcard, c, curView, container);
+                });
+            } catch (Exception e) {
+                Log.e(TAG, "load projects failed", e);
+                runOnUiThread(() -> {
+                    container.removeAllViews();
+                    container.addView(createDarkTip("（加载失败：" + e.getMessage() + "）"));
+                });
+            }
+        }, "project-load").start();
+    }
+
+    /** 渲染项目列表：内置/手机分组，每行 名称 + 进入 + 删除 */
+    private void renderProjectList(LinearLayout container, List<String> inner, List<String> sdcard,
+                                   String cur, TextView curView, LinearLayout listBox) {
+        container.removeAllViews();
+        addProjectGroup(container, "内置目录（/root/）", inner, "/root", cur, curView, listBox);
+        addProjectGroup(container, "手机目录（/sdcard/ReasonixProjects/）", sdcard, "/sdcard/ReasonixProjects", cur, curView, listBox);
+        if (inner.isEmpty() && sdcard.isEmpty()) container.addView(createDarkTip("（暂无项目，可新建）"));
+    }
+
+    private void addProjectGroup(LinearLayout container, String title, List<String> names,
+                                 String base, String cur, TextView curView, LinearLayout listBox) {
+        if (names.isEmpty()) return;
+        TextView t = new TextView(this);
+        t.setText(title);
+        t.setTextColor(0xFFAAAAAA);
+        t.setTextSize(12);
+        t.setPadding(0, dp(10), 0, dp(2));
+        container.addView(t);
+        for (final String name : names) {
+            final String path = base + "/" + name;
+            final boolean isCur = path.equals(cur);
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+            row.setPadding(0, dp(4), 0, dp(4));
+            TextView tv = new TextView(this);
+            tv.setText(name + (isCur ? "（当前）" : ""));
+            tv.setTextColor(isCur ? 0xFF4CAF50 : 0xFFE0E0E0);
+            tv.setTextSize(14);
+            row.addView(tv, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            Button go = createDarkButton("进入");
+            go.setOnClickListener(v -> switchProject(path, curView, listBox));
+            row.addView(go);
+            Button del = createDarkButton("删除");
+            del.setOnClickListener(v -> deleteProject(path, curView, listBox));
+            row.addView(del);
+            container.addView(row);
+        }
+    }
+
+    /** 删除项目目录；若是当前项目则同时清除切换标记 */
+    private void deleteProject(String path, TextView curView, LinearLayout listBox) {
+        new Thread(() -> {
+            try {
+                boolean ok;
+                if (path.startsWith("/sdcard/")) {
+                    // 手机目录走宿主侧（文件管理器可见）
+                    String name = path.substring(path.lastIndexOf('/') + 1);
+                    ok = deleteRecursive(new File("/storage/emulated/0/ReasonixProjects", name));
+                } else {
+                    String out = executeInGuest("rm -rf " + path + " && echo DELETED_OK", 10);
+                    ok = out != null && out.contains("DELETED_OK");
+                }
+                if (!ok) {
+                    runOnUiThread(() -> pushOutput("\r\n[删除项目失败]\r\n"));
+                    return;
+                }
+                File rootDir = new File(new File(getFilesDir(), "rootfs"), "root");
+                File mark = new File(rootDir, ".rsxm-project");
+                if (mark.exists()) {
+                    String s = new String(java.nio.file.Files.readAllBytes(mark.toPath()),
+                            StandardCharsets.UTF_8).trim();
+                    if (s.equals(path)) mark.delete();   // 删的是当前项目，回默认
+                }
+                runOnUiThread(() -> {
+                    pushOutput("\r\n[已删除项目 " + path + "]\r\n");
+                    loadProjectList(curView, listBox);
+                });
+            } catch (Exception e) {
+                Log.e(TAG, "delete project failed", e);
+                runOnUiThread(() -> pushOutput("\r\n[删除项目失败: " + e.getMessage() + "]\r\n"));
+            }
+        }, "project-del").start();
+    }
+
+    /** 递归删除目录/文件（宿主侧手机项目用） */
+    private boolean deleteRecursive(File f) {
+        if (f == null || !f.exists()) return true;
+        if (f.isDirectory()) {
+            File[] ch = f.listFiles();
+            if (ch != null) for (File c : ch) deleteRecursive(c);
+        }
+        return f.delete();
     }
 
     /** 校验新项目名称（目录名安全） */
@@ -907,16 +1026,23 @@ public class MainActivity extends Activity {
     }
 
     /** 新建项目：手机目录(/sdcard/ReasonixProjects/<name>)或内部(/root/<name>)，创建后切换并重启 */
-    private void createProject(String name, boolean inSdcard) {
+    private void createProject(String name, boolean inSdcard, TextView curView, LinearLayout listBox) {
         String path = inSdcard
                 ? "/sdcard/ReasonixProjects/" + name
                 : "/root/" + name;
         new Thread(() -> {
             try {
-                String out = executeInGuest("mkdir -p " + path + " && echo MKDIR_OK", 10);
-                if (out == null || !out.contains("MKDIR_OK")) {
-                    runOnUiThread(() -> pushOutput(
-                            "\r\n[创建项目目录失败: " + (out == null ? "无响应" : out) + "]\r\n"));
+                // 手机目录走宿主侧（文件管理器可见；chroot 内写 /sdcard 被 mount namespace 隔离）；
+                // 内置目录走 guest（rootfs 内）
+                boolean ok;
+                if (inSdcard) {
+                    ok = new File("/storage/emulated/0/ReasonixProjects", name).mkdirs();
+                } else {
+                    String out = executeInGuest("mkdir -p " + path + " && echo MKDIR_OK", 10);
+                    ok = out != null && out.contains("MKDIR_OK");
+                }
+                if (!ok) {
+                    runOnUiThread(() -> pushOutput("\r\n[创建项目目录失败]\r\n"));
                     return;
                 }
                 File rootDir = new File(new File(getFilesDir(), "rootfs"), "root");
@@ -925,6 +1051,7 @@ public class MainActivity extends Activity {
                 runOnUiThread(() -> {
                     pushOutput("\r\n[已创建项目 " + path + "，正在重启 reasonix...]\r\n");
                     restartEnvironment();
+                    refreshAfterEnvRestart(curView, listBox);
                 });
             } catch (Exception e) {
                 Log.e(TAG, "create project failed", e);
@@ -934,41 +1061,21 @@ public class MainActivity extends Activity {
     }
 
     /** 刷新当前项目与项目列表显示（内部 + 手机目录） */
-    private void refreshProjectViews(TextView curView, TextView listView) {
-        new Thread(() -> {
-            try {
-                File rootDir = new File(new File(getFilesDir(), "rootfs"), "root");
-                String cur = "默认（/root）";
-                File mark = new File(rootDir, ".rsxm-project");
-                if (mark.exists()) {
-                    String s = new String(java.nio.file.Files.readAllBytes(mark.toPath()),
-                            StandardCharsets.UTF_8).trim();
-                    if (!s.isEmpty()) cur = s;
-                }
-                String out = executeInGuest(
-                        "echo [内部]:; ls ~/.reasonix/projects/ 2>&1;"
-                                + " echo [手机目录 /sdcard/ReasonixProjects]:;"
-                                + " ls /sdcard/ReasonixProjects/ 2>&1", 10);
-                String list = (out == null || out.trim().isEmpty()) ? "（无）" : out.trim();
-                final String c = cur, l = list;
-                runOnUiThread(() -> {
-                    curView.setText("当前项目：" + c);
-                    listView.setText("已有项目：\n" + l);
-                });
-            } catch (Exception e) {
-                Log.e(TAG, "refresh projects failed", e);
-            }
-        }, "project-list").start();
-    }
-
     /** 切换项目：guest 内创建目录 + 写标记 + 重启环境（reasonix 从新项目目录启动） */
-    private void switchProject(String path) {
+    private void switchProject(String path, TextView curView, LinearLayout listBox) {
         new Thread(() -> {
             try {
-                String out = executeInGuest("mkdir -p " + path + " && echo MKDIR_OK", 10);
-                if (out == null || !out.contains("MKDIR_OK")) {
-                    runOnUiThread(() -> pushOutput(
-                            "\r\n[创建项目目录失败: " + (out == null ? "无响应" : out) + "]\r\n"));
+                // 手机目录走宿主侧（文件管理器可见），内置走 guest
+                boolean ok;
+                if (path.startsWith("/sdcard/")) {
+                    String name = path.substring(path.lastIndexOf('/') + 1);
+                    ok = new File("/storage/emulated/0/ReasonixProjects", name).mkdirs();
+                } else {
+                    String out = executeInGuest("mkdir -p " + path + " && echo MKDIR_OK", 10);
+                    ok = out != null && out.contains("MKDIR_OK");
+                }
+                if (!ok) {
+                    runOnUiThread(() -> pushOutput("\r\n[创建项目目录失败]\r\n"));
                     return;
                 }
                 File rootDir = new File(new File(getFilesDir(), "rootfs"), "root");
@@ -977,12 +1084,18 @@ public class MainActivity extends Activity {
                 runOnUiThread(() -> {
                     pushOutput("\r\n[已切换到项目 " + path + "，正在重启 reasonix...]\r\n");
                     restartEnvironment();
+                    refreshAfterEnvRestart(curView, listBox);
                 });
             } catch (Exception e) {
                 Log.e(TAG, "switch project failed", e);
                 runOnUiThread(() -> pushOutput("\r\n[切换项目失败: " + e.getMessage() + "]\r\n"));
             }
         }, "project-switch").start();
+    }
+
+    /** 环境重启后延迟刷新项目列表（重启期间 guest 服务不可用，等环境起来再读） */
+    private void refreshAfterEnvRestart(TextView curView, LinearLayout listBox) {
+        curView.postDelayed(() -> loadProjectList(curView, listBox), 4000);
     }
 
     /* ==================== 开发环境 ==================== */
@@ -2061,14 +2174,30 @@ public class MainActivity extends Activity {
                 sProotProcess = null;
                 sProcIn = null;
             }
-            // 同 uid 下 kill 同 uid 进程是允许的；按进程名精确匹配，不会误伤其他应用
+            // 1) 先杀 app 同 uid 的进程（proot 模式；按进程名精确匹配，不会误伤其他应用）
             Process p = new ProcessBuilder("sh", "-c",
-                    "for pid in $(ps -A -o PID,NAME 2>/dev/null | grep -E 'proot.so|pty-bridge|reasonix' | awk '{print $1}'); " +
+                    "for pid in $(ps -A -o PID,ARGS 2>/dev/null | grep -E 'proot.so|pty-bridge|reasonix|entry.sh' | awk '{print $1}'); " +
                     "do kill -9 $pid 2>/dev/null; done")
                     .redirectErrorStream(true).start();
             if (!p.waitFor(3, TimeUnit.SECONDS)) p.destroy();
-            // chroot 模式：清理 bind mount（su 进程被强杀时脚本内 umount 可能未执行，
-            // 残留挂载会占用 rootfs/dev 等目录，影响下次启动）
+            // 2) chroot 模式进程是 su(root) 启动的（app 无权杀 root 进程，force-stop 也不杀），
+            //    需用 su pkill 清理，否则旧环境残留导致切换目录/重启不生效
+            try {
+                String su = findSuPath();
+                if (su != null) {
+                    Process k = new ProcessBuilder(su, "-c",
+                            "pkill -9 -f 'reasonix.bin' 2>/dev/null; "
+                                    + "pkill -9 -f 'pty-bridge' 2>/dev/null; "
+                                    + "pkill -9 -f 'entry.sh' 2>/dev/null; "
+                                    + "pkill -9 -f 'chroot /data/user' 2>/dev/null; "
+                                    + "pkill -9 -f 'proot.so' 2>/dev/null; true")
+                            .redirectErrorStream(true).start();
+                    if (!k.waitFor(3, TimeUnit.SECONDS)) k.destroy();
+                }
+            } catch (Exception ignored) {
+            }
+            // 3) chroot 模式：清理 bind mount（su 进程被强杀时脚本内 umount 可能未执行，
+            //    残留挂载会占用 rootfs/dev 等目录，影响下次启动）
             try {
                 String su = findSuPath();
                 if (su != null) {
@@ -2076,7 +2205,8 @@ public class MainActivity extends Activity {
                     String r = rootfs.getAbsolutePath();
                     Process u = new ProcessBuilder(su, "-c",
                             "umount " + r + "/dev/pts 2>/dev/null; umount " + r + "/dev 2>/dev/null; "
-                                    + "umount " + r + "/proc 2>/dev/null; umount " + r + "/sys 2>/dev/null")
+                                    + "umount " + r + "/proc 2>/dev/null; umount " + r + "/sys 2>/dev/null; "
+                                    + "umount " + r + "/sdcard 2>/dev/null")
                             .redirectErrorStream(true).start();
                     if (!u.waitFor(3, TimeUnit.SECONDS)) u.destroy();
                 }
@@ -2489,14 +2619,19 @@ public class MainActivity extends Activity {
      */
     private void startChroot(String su, File rootfs) throws IOException {
         String r = rootfs.getAbsolutePath();
-        String script = "mkdir -p " + r + "/dev/pts " + r + "/proc " + r + "/sys; "
+        // 绑定宿主 /dev + devpts + proc + sys + 手机存储 /storage/emulated/0 → /sdcard
+        // （不绑 /sdcard 时 chroot 内 /sdcard 是 rootfs 内的空目录，手机目录创建的文件
+        //   在文件管理器看不到——与 proot 的 -b /storage/emulated/0:/sdcard 对齐）
+        String script = "mkdir -p " + r + "/dev/pts " + r + "/proc " + r + "/sys " + r + "/sdcard; "
                 + "mount --bind /dev " + r + "/dev 2>/dev/null; "
                 + "mount -t devpts -o gid=5,mode=620 devpts " + r + "/dev/pts 2>/dev/null; "
                 + "mount --bind /proc " + r + "/proc 2>/dev/null; "
                 + "mount --bind /sys " + r + "/sys 2>/dev/null; "
+                + "mount --bind /storage/emulated/0 " + r + "/sdcard 2>/dev/null; "
                 + "chroot " + r + " /usr/bin/pty-bridge /bin/sh /root/entry.sh; RC=$?; "
                 + "umount " + r + "/dev/pts 2>/dev/null; umount " + r + "/dev 2>/dev/null; "
-                + "umount " + r + "/proc 2>/dev/null; umount " + r + "/sys 2>/dev/null; exit $RC";
+                + "umount " + r + "/proc 2>/dev/null; umount " + r + "/sys 2>/dev/null; "
+                + "umount " + r + "/sdcard 2>/dev/null; exit $RC";
         ProcessBuilder pb = new ProcessBuilder(su, "-c", script);
         pb.redirectErrorStream(true);
         pb.environment().put("RSXM_CHROOT", "1");
