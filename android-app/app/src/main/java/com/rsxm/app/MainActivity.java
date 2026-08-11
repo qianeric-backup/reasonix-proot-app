@@ -296,12 +296,9 @@ public class MainActivity extends Activity {
         status.setTextSize(14);
         status.setTypeface(null, android.graphics.Typeface.BOLD);
         TextView tip = createDarkTip(
-                "本应用内置 root 命令桥：AI（reasonix）内可直接执行 root <命令> 获取手机 root 权限。\n\n"
-                        + "使用方式（reasonix 终端里）：\n"
-                        + "  root id                  # 查看 root 身份\n"
-                        + "  root 'pm list packages'  # 例：列出应用\n\n"
+                "reasonix 内可执行 root <命令> 获取手机 root 权限（如 root id、root 'pm list packages'）。\n"
                         + "首次执行会弹出 root 授权请求（KernelSU/Magisk），请允许。\n"
-                        + "⚠ 请勿随意执行未知命令，root 权限可完全控制系统。");
+                        + "⚠ root 可完全控制系统，请勿执行未知命令。");
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(dp(16), dp(8), dp(16), 0);
@@ -575,11 +572,8 @@ public class MainActivity extends Activity {
         title.setPadding(dp(2), dp(14), dp(2), dp(6));
         panel.addView(title);
         panel.addView(createDarkTip(
-                "1. 手机/电脑浏览器打开 platform.deepseek.com 并登录\n"
-                        + "2. 左侧菜单点「充值」（费用与充值）\n"
-                        + "3. 输入金额（最低 ¥10），支持支付宝/微信支付\n"
-                        + "4. 到账后即可使用；新用户有赠送额度，可先体验\n"
-                        + "5. API Key 在「API Keys」页面创建后填入上方输入框"));
+                "platform.deepseek.com 登录 →「充值」（最低 ¥10，支付宝/微信）。\n"
+                        + "API Key 在「API Keys」页面创建后填入上方输入框。"));
         Button openBtn = createDarkButton("打开充值页");
         openBtn.setOnClickListener(v -> {
             try {
@@ -600,9 +594,8 @@ public class MainActivity extends Activity {
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(dp(16), dp(8), dp(16), 0);
         panel.addView(createDarkTip(
-                "SKILL 是 reasonix 的 AI 技能包（SKILL.md 格式），安装后自动加载；\n"
-                        + "可在此新增、查找、启用/禁用、删除。禁用后从 reasonix 隐藏（[skills].disabled_skills）。\n"
-                        + "格式要求：开头必须有 YAML frontmatter，含 name 和 description 两行。"));
+                "SKILL 为 reasonix 技能包（SKILL.md），可新增/查找/启用禁用/删除。\n"
+                        + "格式：开头 YAML frontmatter，含 name 和 description。"));
         // ---- 新增区 ----
         final EditText nameInput = createDarkEditText("SKILL 名称（如 mytool，仅字母数字._-）",
                 InputType.TYPE_CLASS_TEXT);
@@ -644,8 +637,8 @@ public class MainActivity extends Activity {
         listBox.setOrientation(LinearLayout.VERTICAL);
         listScroll.addView(listBox);
         panel.addView(listScroll, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(240)));
-        panel.addView(createDarkTip("说明：勾选 = 启用（reasonix 可加载）；取消勾选 = 禁用（从 reasonix 隐藏）。"));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(300)));
+        panel.addView(createDarkTip("勾选 = 启用；取消勾选 = 禁用（reasonix 隐藏）。"));
         // 刷新/查找联动
         skillRefreshRunnable = () -> loadSkillList(listBox, searchInput.getText().toString().trim());
         searchInput.addTextChangedListener(new TextWatcher() {
@@ -828,9 +821,8 @@ public class MainActivity extends Activity {
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(dp(16), dp(8), dp(16), 0);
         panel.addView(createDarkTip(
-                "项目是 reasonix 的工作目录（AI 会话/记忆按项目隔离），可建在内部（rootfs）或\n"
-                        + "手机目录（/sdcard/ReasonixProjects，文件管理器可见）。\n"
-                        + "点「进入」切换目录（自动重启 reasonix 生效）；「删除」移除该目录。"));
+                "项目为 reasonix 工作目录（会话/记忆按项目隔离）。\n"
+                        + "「进入」切换（重启生效）；「删除」移除。可建内部或手机目录（文件管理器可见）。"));
         final TextView curView = new TextView(this);
         curView.setTextColor(0xFF4CAF50);
         curView.setTextSize(14);
@@ -843,7 +835,7 @@ public class MainActivity extends Activity {
         listBox.setOrientation(LinearLayout.VERTICAL);
         listScroll.addView(listBox);
         panel.addView(listScroll, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(300)));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(360)));
         // 新增区
         panel.addView(createDarkTip("新建项目：输入名称后选择创建位置"));
         final EditText newInput = createDarkEditText("新项目名称（如 myapp，字母数字._-）",
@@ -1125,8 +1117,8 @@ public class MainActivity extends Activity {
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(dp(16), dp(8), dp(16), 0);
         panel.addView(createDarkTip(
-                "一键安装常用开发环境（基于 Alpine 包管理器，需联网）。\n"
-                        + "点击后后台自动安装，进度实时显示在下方；大环境（Android/Go）耗时较长。"));
+                "一键安装开发环境（Alpine 包，需联网），进度实时显示。\n"
+                        + "大环境（Android/Go）耗时较长。"));
 
         // chroot 检测：Android 开发依赖 chroot 运行模式（JVM 需 root 域，proot + SELinux
         // enforcing 下 mprotect RWX 被拒无法启动）；未开启 chroot 时置灰并提示。
@@ -1179,6 +1171,16 @@ public class MainActivity extends Activity {
                 {"C/C++ 开发", "gcc g++ make musl-dev", "GCC/G++ + Make + 头文件", "0", "gcc g++ make"},
                 {"通用工具", "git vim curl wget zip unzip", "Git/Vim/curl/wget 等", "0", "git vim curl wget zip unzip"},
         };
+        // ---- 已安装列表（固定高度 + 二级滑动；每行 名称/状态/删除）----
+        panel.addView(createDarkTip("已安装环境（可删除）："));
+        final ScrollView envScroll = new ScrollView(this);
+        final LinearLayout envList = new LinearLayout(this);
+        envList.setOrientation(LinearLayout.VERTICAL);
+        envScroll.addView(envList);
+        panel.addView(envScroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(220)));
+        loadInstalledEnvs(envList, envs);
+        panel.addView(createDarkTip("安装（大环境 Android/Go 耗时较长）："));
         final Button[] buttons = new Button[envs.length];
         for (int i = 0; i < envs.length; i++) {
             final String[] e = envs[i];
@@ -1333,6 +1335,113 @@ public class MainActivity extends Activity {
         }, "dev-env").start();
     }
 
+    /** 检测各开发环境是否已安装（关键命令存在），渲染到已安装列表 */
+    private void loadInstalledEnvs(LinearLayout container, String[][] envs) {
+        container.removeAllViews();
+        container.addView(createDarkTip("检测中..."));
+        new Thread(() -> {
+            try {
+                char[] tags = {'A', 'P', 'N', 'G', 'C', 'T'};
+                StringBuilder cmd = new StringBuilder("ok(){ command -v $1 >/dev/null 2>&1 && echo -n 1 || echo -n 0; }; ");
+                for (int i = 0; i < envs.length && i < tags.length; i++) {
+                    cmd.append("echo ").append(tags[i]).append(":$(ok ")
+                            .append(envs[i][4].replace(" ", ")$(ok ")).append("); ");
+                }
+                String out = executeInGuest(cmd.toString(), 15);
+                final boolean[] installed = new boolean[envs.length];
+                final boolean[] partial = new boolean[envs.length];
+                if (out != null) {
+                    for (int i = 0; i < envs.length && i < tags.length; i++) {
+                        String line = null;
+                        for (String l : out.split("\n")) {
+                            if (l.startsWith(tags[i] + ":")) { line = l.substring(2).trim(); break; }
+                        }
+                        if (line == null) continue;
+                        int count = 0;
+                        for (int k = 0; k < line.length(); k++) if (line.charAt(k) == '1') count++;
+                        int total = envs[i][4].split(" ").length;
+                        installed[i] = count == total;
+                        partial[i] = count > 0 && count < total;
+                    }
+                }
+                runOnUiThread(() -> renderInstalledEnvs(container, envs, installed, partial));
+            } catch (Exception e) {
+                Log.e(TAG, "load installed envs failed", e);
+            }
+        }, "env-installed-load").start();
+    }
+
+    /** 渲染已安装环境列表（名称 + 状态 + 删除按钮） */
+    private void renderInstalledEnvs(LinearLayout container, String[][] envs,
+                                     boolean[] installed, boolean[] partial) {
+        container.removeAllViews();
+        boolean any = false;
+        for (int i = 0; i < envs.length; i++) {
+            final String[] e = envs[i];
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+            row.setPadding(0, dp(4), 0, dp(4));
+            TextView tv = new TextView(this);
+            String st = installed[i] ? "已安装" : (partial[i] ? "部分安装" : "未安装");
+            tv.setText(e[0] + "：" + st);
+            tv.setTextColor(installed[i] ? 0xFF7FDB8A : (partial[i] ? 0xFFFFD54F : 0xFF888888));
+            tv.setTextSize(13);
+            row.addView(tv, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            if (installed[i] || partial[i]) {
+                final String name = e[0];
+                final String pkgs = e[1];
+                Button del = createDarkButton("删除");
+                del.setOnClickListener(v -> uninstallDevEnv(name, pkgs, container, envs));
+                row.addView(del);
+            }
+            container.addView(row);
+            any = true;
+        }
+        if (!any) container.addView(createDarkTip("（无已安装环境）"));
+    }
+
+    /** 删除开发环境：guest 内 nohup apk del，完成后刷新已安装列表 */
+    private void uninstallDevEnv(String name, String packages, LinearLayout container, String[][] envs) {
+        if (devEnvInstalling) {
+            runOnUiThread(() -> pushOutput("\r\n[开发环境] 有安装/删除任务进行中，请等待完成\r\n"));
+            return;
+        }
+        devEnvInstalling = true;
+        devEnvInstallingName = name + " 删除";
+        pushOutput("\r\n[开发环境] 开始删除 " + name + "（后台进行）...\r\n");
+        new Thread(() -> {
+            try {
+                String script = "#!/bin/sh\n"
+                        + "echo \"--- 删除 " + name + " ---\" > /root/.env-install.log\n"
+                        + "apk del " + packages + " >> /root/.env-install.log 2>&1\n"
+                        + "echo INSTALL_DONE_$? > /root/.env-done\n";
+                String b64 = Base64.encodeToString(script.getBytes("UTF-8"), Base64.NO_WRAP);
+                executeInGuest("rm -f /root/.env-done /root/.env-install.log; "
+                        + "echo " + b64 + " | base64 -d > /root/.env-install.sh; chmod +x /root/.env-install.sh; "
+                        + "nohup sh /root/.env-install.sh > /dev/null 2>&1 & echo STARTED", 8);
+                long deadline = System.currentTimeMillis() + 5 * 60 * 1000L;
+                while (System.currentTimeMillis() < deadline) {
+                    Thread.sleep(3000);
+                    String st = executeInGuest("cat /root/.env-done 2>/dev/null", 6);
+                    if (st != null && st.contains("INSTALL_DONE_")) {
+                        runOnUiThread(() -> {
+                            pushOutput("\r\n[开发环境] " + name + " 已删除\r\n");
+                            loadInstalledEnvs(container, envs);
+                        });
+                        return;
+                    }
+                }
+                runOnUiThread(() -> pushOutput("\r\n[开发环境] " + name + " 删除超时\r\n"));
+            } catch (Exception e) {
+                Log.e(TAG, "uninstall dev env failed", e);
+            } finally {
+                devEnvInstalling = false;
+                devEnvInstallingName = null;
+            }
+        }, "dev-env-del").start();
+    }
+
     /** 深色输入框（原生 Material 下划线风格，背景透明保持纯黑） */
     private EditText createDarkEditText(String hint, int inputType) {
         EditText et = new EditText(this);
@@ -1390,12 +1499,9 @@ public class MainActivity extends Activity {
         if (!savedPairPort.isEmpty()) pairPort.setText(savedPairPort);
         EditText pairCode = createDarkEditText("配对码（6 位数字）", InputType.TYPE_CLASS_NUMBER);
         if (savedPairCode.length() == 6) pairCode.setText(savedPairCode);
-        TextView tip = createDarkTip("本机 IP：" + ip + "\n\n"
-                + "1. 手机：设置 -> 开发者选项 -> 无线调试 -> 打开，抄下配对码与配对端口\n"
-                + "2. 首次使用：填配对端口+配对码，点「配对并连接」（配对后自动扫描连接端口并直连）\n"
-                + "3. 之后免配对：点「自动连接」直接扫描连接（无需任何输入）\n"
-                + "4. 连接成功后，reasonix（AI）里可直接执行 adb shell / adb install 等\n\n"
-                + "连接由本应用处理，AI 会话无需关心配对/端口。");
+        TextView tip = createDarkTip("本机 IP：" + ip + "\n"
+                + "手机「开发者选项 → 无线调试」开启后：首次填配对端口+配对码点「配对并连接」；\n"
+                + "之后点「自动连接」免配对直连；连接后 reasonix 内可直接 adb shell / adb install。");
         // 独立状态行（执行后自动刷新）
         TextView statusLine = new TextView(this);
         statusLine.setText("连接状态：" + status);
@@ -1460,8 +1566,7 @@ public class MainActivity extends Activity {
         szStatus.setTextColor(szOn ? 0xFF4CAF50 : 0xFFFFD54F);
         panel.addView(szStatus);
         panel.addView(createDarkTip(
-                "Shizuku 模式：授权后 adb 命令以 Shizuku 权限执行（无需 root、无需本应用保活），\n"
-                        + "关闭本应用后仍可通过 Shizuku 持久化使用 adb（替代原「后台保活」）。"));
+                "Shizuku 授权后 adb 命令以其权限执行，关闭本应用仍可用（替代后台保活）。"));
         Button szBtn = createDarkButton(szOn
                 ? "通过 Shizuku 持久化 adb（启动 adb server）" : "Shizuku 授权（打开授权页）");
         szBtn.setOnClickListener(v -> {
@@ -1909,9 +2014,8 @@ public class MainActivity extends Activity {
                 Log.w(TAG, "query latest version failed", e);
             }
         }, "rx-ver-check").start();
-        TextView tip = createDarkTip("官方源：@reasonix/cli-linux-arm64（npm 平台包）\n"
-                + "可修改下方链接更新到其它版本。\n"
-                + "或从手机选择新版文件 / 恢复内置版本。");
+        TextView tip = createDarkTip("官方源 @reasonix/cli-linux-arm64（npm 平台包）。\n"
+                + "可改链接更新、选文件更新或恢复内置版本。");
         panel.addView(tip);
         panel.addView(urlInput);
         Button netBtn = createDarkButton("网络更新");
