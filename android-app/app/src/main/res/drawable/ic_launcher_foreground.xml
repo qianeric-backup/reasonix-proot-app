@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- RSXM 终端风格图标：深色终端窗口 + 绿色提示符 >_ -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- 终端窗口圆角框（深色，半透明） -->
+    <path
+        android:pathData="M22,28 h64 a9,9 0 0 1 9,9 v34 a9,9 0 0 1 -9,9 h-64 a9,9 0 0 1 -9,-9 v-34 a9,9 0 0 1 9,-9 z"
+        android:fillColor="#FF14181D"/>
+    <!-- 终端标题栏三点（绿/黄/红） -->
+    <path android:pathData="M31,36 m-2.5,0 a2.5,2.5 0 1 0 5,0 a2.5,2.5 0 1 0 -5,0"
+        android:fillColor="#FF4CAF50"/>
+    <path android:pathData="M42,36 m-2.5,0 a2.5,2.5 0 1 0 5,0 a2.5,2.5 0 1 0 -5,0"
+        android:fillColor="#FFFFD54F"/>
+    <path android:pathData="M53,36 m-2.5,0 a2.5,2.5 0 1 0 5,0 a2.5,2.5 0 1 0 -5,0"
+        android:fillColor="#FFFF6B6B"/>
+    <!-- 绿色提示符 >_ -->
+    <path
+        android:pathData="M32,52 L50,60 L32,68 M32,76 L64,76"
+        android:strokeColor="#FF4CAF50"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000"/>
+</vector>
