@@ -281,6 +281,12 @@ rm -f /root/.reasonix/projects/*/sessions/*.recovery.json \
       /root/.reasonix/projects/*/sessions/*.recovery \
       /root/.reasonix/projects/*/sessions/*.lease.* 2>/dev/null
 
+# 项目元数据目录权限归一：proot（guest root = app uid）与 chroot（真实 root）运行模式
+# 切换后，/root/.reasonix/projects/ 下项目目录 owner 不一致（700 且属不同 uid），
+# reasonix 在当前模式下创建 sessions 会 permission denied（controller: open session inbox）。
+# 统一放开读写权限（目录位于 app 私有 rootfs 内，无外部访问风险）。
+chmod -R a+rwx /root/.reasonix/projects/ 2>/dev/null
+
 # reasonix 启动包装：保证每次启动（含退出后再次运行、更新后重启）都全新进入 TUI（alt screen）。
 # 将真实二进制改名为 reasonix.bin，用 wrapper 替代 reasonix——无论 entry.sh 首次启动
 # 还是用户在 shell 里再次输入 reasonix，都会先清理会话恢复标记再启动。

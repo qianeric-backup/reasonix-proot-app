@@ -3135,6 +3135,25 @@ public class MainActivity extends Activity {
     }
 
     /** 启动 proot（从 nativeLibraryDir 执行）-> Alpine -> pty-bridge(PTY) -> entry.sh -> reasonix */
+    /** 项目元数据目录权限归一：proot/chroot 运行模式切换后 projects 下项目目录 owner 不一致
+     *  （chroot 创建的为 root 属主 700，proot 下 guest root=app uid 无 CAP_FOWNER 无法 chmod，
+     *   reasonix 创建 sessions 报 permission denied）。环境启动前用真实 root 统一放开读写权限。 */
+    private void normalizeProjectPerms() {
+        try {
+            File rootfs = new File(getFilesDir(), "rootfs");
+            String r = rootfs.getAbsolutePath();
+            String su = findSuPath();
+            if (su != null) {
+                Process p = new ProcessBuilder(su, "-c",
+                        "chmod -R a+rwx " + r + "/root/.reasonix/projects/ 2>/dev/null")
+                        .redirectErrorStream(true).start();
+                if (!p.waitFor(3, TimeUnit.SECONDS)) p.destroy();
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "normalize project perms failed", e);
+        }
+    }
+
     private void startProot(File files, File rootfs) throws IOException {
         // 防重复启动：环境已在运行时直接跳过（onCreate 已 kill 旧环境，此为双保险；
         // 后台运行模式复用场景 environmentStarted=true 已挡在启动前）
@@ -3142,6 +3161,8 @@ public class MainActivity extends Activity {
             Log.d(TAG, "proot already running, skip start");
             return;
         }
+        // 启动前归一项目元数据权限（真实 root；修复运行模式切换导致的 sessions permission denied）
+        normalizeProjectPerms();
         // chroot 模式：root 直接 chroot 进 rootfs（无 ptrace/seccomp 层，进程为 ksu(root) 域，
         // enforcing 下 JVM/apk 均正常，无需 setenforce 0）。无 root 时回退 proot。
         if (isChrootMode()) {
