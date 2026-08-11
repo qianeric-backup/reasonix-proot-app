@@ -3135,6 +3135,26 @@ public class MainActivity extends Activity {
     }
 
     /** 启动 proot（从 nativeLibraryDir 执行）-> Alpine -> pty-bridge(PTY) -> entry.sh -> reasonix */
+    /** 清理历史孤儿 guest 进程：多代环境重启/force-stop 后 proot 被杀，guest 内
+     *  entry.sh/pty-bridge 变孤儿（PPID=1）累积，多套并存导致 adb 服务循环(.adb-cmd/.adb-out)
+     *  多实例竞争、reasonix 会话冲突。环境启动前用真实 root 强制清理（仅当非后台复用场景）。 */
+    private void cleanupOrphanGuests() {
+        try {
+            String su = findSuPath();
+            if (su != null) {
+                Process p = new ProcessBuilder(su, "-c",
+                        "pkill -9 -f 'entry.sh' 2>/dev/null; "
+                                + "pkill -9 -f 'pty-bridge' 2>/dev/null; "
+                                + "pkill -9 -f 'proot.so' 2>/dev/null; "
+                                + "pkill -9 -f 'reasonix.bin' 2>/dev/null; true")
+                        .redirectErrorStream(true).start();
+                if (!p.waitFor(3, TimeUnit.SECONDS)) p.destroy();
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "cleanup orphan guests failed", e);
+        }
+    }
+
     /** 项目元数据目录权限归一：proot/chroot 运行模式切换后 projects 下项目目录 owner 不一致
      *  （chroot 创建的为 root 属主 700，proot 下 guest root=app uid 无 CAP_FOWNER 无法 chmod，
      *   reasonix 创建 sessions 报 permission denied）。环境启动前用真实 root 统一放开读写权限。 */
@@ -3161,7 +3181,8 @@ public class MainActivity extends Activity {
             Log.d(TAG, "proot already running, skip start");
             return;
         }
-        // 启动前归一项目元数据权限（真实 root；修复运行模式切换导致的 sessions permission denied）
+        // 启动前清理孤儿 guest 进程 + 归一项目元数据权限（真实 root）
+        cleanupOrphanGuests();
         normalizeProjectPerms();
         // chroot 模式：root 直接 chroot 进 rootfs（无 ptrace/seccomp 层，进程为 ksu(root) 域，
         // enforcing 下 JVM/apk 均正常，无需 setenforce 0）。无 root 时回退 proot。
