@@ -286,11 +286,12 @@ rm -f /root/.reasonix/projects/*/sessions/*.recovery.json \
 # 还是用户在 shell 里再次输入 reasonix，都会先清理会话恢复标记再启动。
 
 # 环境说明（reasonix 项目记忆 AGENTS.md，启动自动加载）：告知 AI 本环境是 Android 手机
-# proot 容器，adb shell 经 root 命令桥直连手机（无需无线调试），可打开应用/模拟操作。
+# proot/chroot 容器（双运行模式），adb shell 经 root 命令桥直连手机（无需无线调试），
+# 可打开应用/模拟操作；内置 root 命令桥（root <命令>）。
 cat > /root/AGENTS.md <<'MD'
 # RSXM 环境说明
 
-本环境是运行在 **Android 手机** 上的 Alpine Linux proot 容器（不是服务器，也不是远程机器）。
+本环境是运行在 **Android 手机** 上的 Alpine Linux 容器（proot/chroot 两种运行模式，不是服务器，也不是远程机器）。
 用户要求"打开/操作手机上的应用"时，直接用下面的 adb shell 命令即可完成。
 
 ## 控制宿主手机（重要）
@@ -303,6 +304,10 @@ cat > /root/AGENTS.md <<'MD'
   - 包管理：`adb shell pm list packages`、`adb shell pm disable-user --user 0 <包名>`
   - 系统设置：`adb shell settings put global ...`
 - 若手机没有 root（无 su），`adb shell` 会回退到无线调试（需要先配对连接）。
+
+## 内置 root 命令桥（root 权限）
+- 直接执行 `root <命令>` 以 root 权限运行宿主手机命令，例如：
+  `root id`、`root 'pm list packages'`、`root 'settings put global ...'`
 MD
 # 幂等/更新安全：reasonix 更新会覆盖 wrapper 位置（写入新二进制），entry.sh 检测到
 # reasonix 不是 wrapper（首行无标记）时，把新二进制备份为 reasonix.bin；

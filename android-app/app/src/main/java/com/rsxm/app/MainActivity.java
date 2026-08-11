@@ -1126,15 +1126,16 @@ public class MainActivity extends Activity {
         final boolean chrootOn = isChrootMode();
         final TextView chrootWarn = new TextView(this);
         chrootWarn.setText(chrootOn ? ""
-                : "⚠ 未开启 chroot 运行模式。\n"
-                + "Android 开发依赖 chroot（JVM 需 root 域，proot + SELinux enforcing 下无法启动），已置灰。\n"
-                + "请先在侧滑栏 root 面板「切换为 chroot 模式」（需 root 授权）。\n"
-                + "Python/Node.js/Go/C-C++/通用工具不依赖 chroot，可直接安装使用。");
+                : "⚠ 未开启 chroot：Android 开发已置灰（JVM 需 root 域）。\nROOT 功能面板可切换为 chroot。");
         chrootWarn.setTextColor(chrootOn ? 0xFFAAAAAA : 0xFFFF6B6B);
         chrootWarn.setTextSize(13);
         chrootWarn.setLineSpacing(0, 1.2f);
-        chrootWarn.setPadding(0, dp(10), 0, dp(6));
-        panel.addView(chrootWarn);
+        chrootWarn.setMaxLines(2);
+        chrootWarn.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        chrootWarn.setPadding(0, dp(6), 0, dp(2));
+        // 固定高度：警告出现/消失/精简不引起功能页内容上下移动
+        panel.addView(chrootWarn, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(46)));
 
         // 安装进度区（固化显示且高度固定：空闲/安装中/完成时输出内容变化不引起功能页上下调整）
         LinearLayout progressBox = new LinearLayout(this);
