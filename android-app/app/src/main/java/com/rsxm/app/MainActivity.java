@@ -1288,8 +1288,8 @@ public class MainActivity extends Activity {
                             progressTitle.setTextColor(ok ? 0xFF7FDB8A : 0xFFFF6B6B);
                             progressBar.setIndeterminate(false);
                             progressBar.setProgress(100);
-                            progressText.setText((ok ? "完成（退出码 0）" : "失败（apk 退出码 " + code + "）")
-                                    + "：" + tail.trim());
+                            // 进度条下只显示简单状态，不回显安装日志（tail 已固化省略无意义）
+                            progressText.setText(ok ? "完成（退出码 0）" : "失败（apk 退出码 " + code + "）");
                             loadInstalledEnvs(envList, envs, progressBox, progressTitle, progressBar, progressText);
                             pushOutput(msg);
                         });
