@@ -12,6 +12,8 @@ import android.content.SharedPreferences;
 import android.net.Uri;
 import android.os.Build;
 import android.view.WindowManager;
+import android.widget.Spinner;
+import android.widget.ArrayAdapter;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.Settings;
@@ -74,6 +76,8 @@ public class MainActivity extends Activity {
     private static final String TAG = "ReasonixProot";
     private static final int REQ_UPDATE_RESONIX = 200;
     private static final int REQ_SKILL_IMPORT = 201;
+    private static final int REQ_CREATE_ENV_TEMPLATE = 202;
+    private static final int REQ_IMPORT_ENV_TEMPLATE = 203;
     /** 官方更新源：@reasonix/cli-linux-arm64（npm 平台二进制包，npmmirror 国内镜像） */
     private static final String REASONIX_DEFAULT_URL =
             "https://registry.npmmirror.com/@reasonix/cli-linux-arm64/-/cli-linux-arm64-1.21.1.tgz";
@@ -337,7 +341,7 @@ public class MainActivity extends Activity {
         modeBtn.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF1E1E1E));
         panel.addView(modeBtn);
         // 全屏面板展示（取代系统弹窗，避免遮挡控件）
-        showPanel("ROOT 功能", panel, null);
+        showPanel("ROOT", panel, null);
         // 检测状态（后台线程）
         new Thread(() -> {
             final String st;
@@ -501,7 +505,7 @@ public class MainActivity extends Activity {
         boolean on = getSharedPreferences("prefs", MODE_PRIVATE).getBoolean("background_mode", false);
         TextView tv = findViewById(R.id.menu_bgmode);
         if (tv != null) {
-            tv.setText(on ? "后台运行模式：开" : "后台运行模式：关");
+            tv.setText(on ? "后台运行：开" : "后台运行：关");
             tv.setTextColor(on ? 0xFF4CAF50 : 0xFFFFFFFF);
         }
     }
@@ -511,7 +515,7 @@ public class MainActivity extends Activity {
         boolean on = getSharedPreferences("prefs", MODE_PRIVATE).getBoolean("yolo_mode", true);
         TextView tv = findViewById(R.id.menu_yolo);
         if (tv != null) {
-            tv.setText(on ? "YOLO 免审批模式：开" : "YOLO 免审批模式：关");
+            tv.setText(on ? "YOLO 免审批：开" : "YOLO 免审批：关");
             tv.setTextColor(on ? 0xFF4CAF50 : 0xFFFFFFFF);
         }
     }
@@ -603,7 +607,7 @@ public class MainActivity extends Activity {
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(dp(16), dp(8), dp(16), 0);
         panel.addView(createDarkTip(
-                "SKILL 为 reasonix 技能包（SKILL.md），可新增/查找/启用禁用/删除。\n"
+                "SKILL 为 reasonix 技能包（SKILL.md），全局安装（所有项目共用，切换项目不影响）。\n"
                         + "格式：开头 YAML frontmatter，含 name 和 description。"));
         // ---- 新增区 ----
         skillNameInput = createDarkEditText("SKILL 名称（如 mytool，仅字母数字._-）",
@@ -672,7 +676,7 @@ public class MainActivity extends Activity {
             @Override public void afterTextChanged(Editable s) {}
         });
         skillRefreshRunnable.run();   // 初始加载列表
-        showPanel("SKILL 功能", panel, null);
+        showPanel("SKILL", panel, null);
     }
 
     /** SKILL 列表刷新任务（安装/删除/开关后调用；面板持有当前 listBox/filter） */
@@ -681,28 +685,11 @@ public class MainActivity extends Activity {
     /** SKILL 面板输入框引用（文件导入回调填充用；面板每次重建时重新赋值） */
     private EditText skillNameInput, skillContentInput;
 
-    /** 当前项目路径：宿主侧读 /root/.rsxm-project 标记（与项目面板一致），无标记为默认 /root */
-    private String currentProjectPath() {
-        try {
-            File rootDir = new File(new File(getFilesDir(), "rootfs"), "root");
-            File mark = new File(rootDir, ".rsxm-project");
-            if (mark.exists()) {
-                String s = new String(java.nio.file.Files.readAllBytes(mark.toPath()),
-                        StandardCharsets.UTF_8).trim();
-                if (!s.isEmpty()) return s;
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "read project mark failed", e);
-        }
-        return "/root";
-    }
-
-    /** 当前项目 skills 目录的宿主侧路径；仅手机目录项目（/sdcard/...）适用，内部项目返回 null
-     *  （reasonix 工作区在手机目录时，guest 内写 /sdcard 依赖 proot/chroot 绑定且可能被隔离，
-     *   与项目创建/删除/列表一致，手机目录一律走宿主 File API 读写真存储） */
-    private File hostSkillsDir(String project) {
-        if (!project.startsWith("/sdcard/")) return null;
-        return new File(project.replace("/sdcard", "/storage/emulated/0"), ".reasonix/skills");
+    /** 全局 SKILL 根目录（Reasonix home: ~/.reasonix/skills）的宿主侧路径。
+     *  SKILL 全局通用：所有项目共用（reasonix 每个项目都会加载 <Reasonix home>/skills/），
+     *  切换项目不影响；固定路径在 rootfs 内，不依赖 guest 内 /sdcard 绑定。 */
+    private File globalSkillsDir() {
+        return new File(new File(new File(getFilesDir(), "rootfs"), "root"), ".reasonix/skills");
     }
 
     /** 解析 guest 读出的 disabled_skills 行（形如 disabled_skills = ["a", "b"]） */
@@ -723,41 +710,20 @@ public class MainActivity extends Activity {
         container.addView(createDarkTip("加载列表中..."));
         new Thread(() -> {
             try {
-                final String project = currentProjectPath();
                 final List<String> names = new ArrayList<>();
                 final java.util.Set<String> disabled = new java.util.HashSet<>();
-                File host = hostSkillsDir(project);
-                if (host != null) {
-                    // 手机目录项目：宿主侧列目录（与安装/删除一致，不依赖 guest /sdcard 绑定）
-                    File[] dirs = host.listFiles();
-                    if (dirs != null) {
-                        for (File d : dirs) {
-                            String n = d.getName();
-                            if (d.isDirectory() && !n.startsWith(".")) names.add(n);
-                        }
-                    }
-                    // disabled 状态：config.toml 在 /root/.reasonix/（全局），仍经 guest 读
-                    parseDisabled(executeInGuest(
-                            "grep -A8 '\\[skills\\]' $HOME/.reasonix/config.toml 2>/dev/null | grep disabled_skills", 10),
-                            disabled);
-                } else {
-                    String out = executeInGuest(
-                            "SK=\"" + project + "/.reasonix/skills\"; "
-                                    + "ls \"$SK\" 2>/dev/null; echo ===DISABLED===; "
-                                    + "grep -A8 '\\[skills\\]' $HOME/.reasonix/config.toml 2>/dev/null | grep disabled_skills", 10);
-                    if (out != null) {
-                        String[] parts = out.split("===DISABLED===");
-                        if (parts.length > 0) {
-                            for (String l : parts[0].split("\n")) {
-                                String t = l.trim();
-                                if (t.isEmpty() || t.contains("error")
-                                        || (t.startsWith("(") && t.endsWith(")"))) continue;   // 过滤超时/失败提示
-                                names.add(t.replace("/", ""));
-                            }
-                        }
-                        if (parts.length > 1) parseDisabled(parts[1], disabled);
+                // 全局 skills 目录（~/.reasonix/skills）：宿主侧列目录，与安装/删除一致，不依赖 guest /sdcard 绑定
+                File[] dirs = globalSkillsDir().listFiles();
+                if (dirs != null) {
+                    for (File d : dirs) {
+                        String n = d.getName();
+                        if (d.isDirectory() && !n.startsWith(".")) names.add(n);
                     }
                 }
+                // disabled 状态：config.toml 在 /root/.reasonix/（Reasonix home），仍经 guest 读
+                parseDisabled(executeInGuest(
+                        "grep -A8 '\\[skills\\]' $HOME/.reasonix/config.toml 2>/dev/null | grep disabled_skills", 10),
+                        disabled);
                 runOnUiThread(() -> renderSkillList(container, names, disabled, filter));
             } catch (Exception e) {
                 Log.e(TAG, "load skills failed", e);
@@ -846,27 +812,21 @@ public class MainActivity extends Activity {
         }, "skill-toggle").start();
     }
 
-    /** 卸载 SKILL：删除当前项目 .reasonix/skills/<name> 目录（手机目录项目走宿主侧，与项目删除一致） */
+    /** 卸载 SKILL：删除全局 SKILL 目录 ~/.reasonix/skills/<name>（所有项目共用，切换项目不影响） */
     private void uninstallSkill(String name) {
         new Thread(() -> {
             try {
-                final String project = currentProjectPath();
                 String out;
-                File host = hostSkillsDir(project);
-                if (host != null) {
-                    boolean ok = deleteRecursive(new File(host, name));
-                    StringBuilder sb = new StringBuilder(ok ? "UNINSTALLED_OK" : "(宿主删除失败)");
-                    File[] left = host.listFiles();
-                    if (left != null) {
-                        for (File f : left) {
-                            if (f.isDirectory() && !f.getName().startsWith(".")) sb.append('\n').append(f.getName());
-                        }
+                File dir = new File(globalSkillsDir(), name);
+                boolean ok = deleteRecursive(dir);
+                StringBuilder sb = new StringBuilder(ok ? "UNINSTALLED_OK" : "(宿主删除失败)");
+                File[] left = globalSkillsDir().listFiles();
+                if (left != null) {
+                    for (File f : left) {
+                        if (f.isDirectory() && !f.getName().startsWith(".")) sb.append('\n').append(f.getName());
                     }
-                    out = sb.toString();
-                } else {
-                    out = executeInGuest("SK=\"" + project + "/.reasonix/skills\"; "
-                            + "rm -rf \"$SK/" + name + "\" && echo UNINSTALLED_OK && ls \"$SK\" 2>&1", 10);
                 }
+                out = sb.toString();
                 String msg = "\r\n[卸载 SKILL: " + name + "]\r\n"
                         + ((out != null && out.contains("UNINSTALLED_OK"))
                             ? "已删除。剩余 SKILL：\n" + out.replace("UNINSTALLED_OK", "").trim()
@@ -880,11 +840,11 @@ public class MainActivity extends Activity {
         }, "skill-uninstall").start();
     }
 
-    /** 内部项目：经 guest 服务循环写入 SKILL（base64 避免转义/引号问题） */
-    private String guestInstallSkill(String name, String content, String project) {
+    /** 回退路径：经 guest 服务循环写入全局 SKILL（base64 避免转义/引号问题） */
+    private String guestInstallSkill(String name, String content) {
         String b64 = android.util.Base64.encodeToString(
                 content.getBytes(StandardCharsets.UTF_8), android.util.Base64.NO_WRAP);
-        String cmd = "SK=\"" + project + "/.reasonix/skills\"; "
+        String cmd = "SK=\"/root/.reasonix/skills\"; "
                 + "mkdir -p \"$SK/" + name + "\""
                 + " && echo " + b64 + " | base64 -d > \"$SK/" + name + "/SKILL.md\""
                 + " && chmod 644 \"$SK/" + name + "/SKILL.md\""
@@ -892,36 +852,29 @@ public class MainActivity extends Activity {
         return executeInGuest(cmd, 12);
     }
 
-    /** 安装 SKILL 文件：内容 base64 编码后经 guest 服务循环写入（避免转义/引号问题）。
-     *  手机目录项目走宿主侧写真存储（guest 内写 /sdcard 依赖绑定、可能被 mount namespace
-     *  隔离导致宿主/重启后不可见——与项目创建/删除/列表一致的处理方式）；宿主写入失败时
-     *  回退 guest 命令。完成后回调刷新列表。 */
+    /** 安装 SKILL：写入全局 SKILL 目录 ~/.reasonix/skills/<name>/SKILL.md（Reasonix home skills，
+     *  所有项目共用，切换项目不影响；reasonix 内 /skills reload 或重启后显示）。
+     *  宿主侧写入 rootfs（稳定，不依赖 guest /sdcard 绑定）；宿主写入失败回退 guest 命令。 */
     private void installSkill(String name, String content) {
         new Thread(() -> {
             try {
-                final String project = currentProjectPath();
                 String out;
-                File host = hostSkillsDir(project);
-                if (host != null) {
-                    File dir = new File(host, name);
-                    try {
-                        if (dir.mkdirs() || dir.isDirectory()) {
-                            java.nio.file.Files.write(new File(dir, "SKILL.md").toPath(),
-                                    content.getBytes(StandardCharsets.UTF_8));
-                            out = "INSTALLED_OK\n" + new File(dir, "SKILL.md").getAbsolutePath();
-                        } else {
-                            out = guestInstallSkill(name, content, project);   // 宿主创建失败回退
-                        }
-                    } catch (Exception e2) {
-                        Log.w(TAG, "host skill write failed, fallback guest", e2);
-                        out = guestInstallSkill(name, content, project);
+                File dir = new File(globalSkillsDir(), name);
+                try {
+                    if (dir.mkdirs() || dir.isDirectory()) {
+                        java.nio.file.Files.write(new File(dir, "SKILL.md").toPath(),
+                                content.getBytes(StandardCharsets.UTF_8));
+                        out = "INSTALLED_OK\n" + new File(dir, "SKILL.md").getAbsolutePath();
+                    } else {
+                        out = guestInstallSkill(name, content);   // 宿主创建失败回退
                     }
-                } else {
-                    out = guestInstallSkill(name, content, project);
+                } catch (Exception e2) {
+                    Log.w(TAG, "host skill write failed, fallback guest", e2);
+                    out = guestInstallSkill(name, content);
                 }
                 String msg = "\r\n[安装 SKILL: " + name + "]\r\n"
                         + (out == null ? "(无响应)" : out)
-                        + "\r\n[完成。reasonix 内 /skills reload 或重启应用环境后显示]\r\n";
+                        + "\r\n[完成。SKILL 为全局安装（所有项目共用），reasonix 内 /skills reload 或重启应用环境后显示]\r\n";
                 runOnUiThread(() -> pushOutput(msg));
                 runOnUiThread(() -> { if (skillRefreshRunnable != null) skillRefreshRunnable.run(); });
             } catch (Exception e) {
@@ -955,8 +908,12 @@ public class MainActivity extends Activity {
         new Thread(() -> {
             try {
                 String content;
-                try (InputStream is = getContentResolver().openInputStream(uri);
-                     BufferedReader r = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
+                try (InputStream is = getContentResolver().openInputStream(uri)) {
+                    if (is == null) {
+                        runOnUiThread(() -> pushOutput("\r\n[导入失败: 无法读取所选文件]\r\n"));
+                        return;
+                    }
+                    BufferedReader r = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8));
                     StringBuilder sb = new StringBuilder();
                     String line;
                     while ((line = r.readLine()) != null) sb.append(line).append('\n');
@@ -1293,7 +1250,7 @@ public class MainActivity extends Activity {
         final boolean chrootOn = isChrootMode();
         final TextView chrootWarn = new TextView(this);
         chrootWarn.setText(chrootOn ? ""
-                : "⚠ 未开启 chroot：Android 开发已置灰（JVM 需 root 域）。\nROOT 功能面板可切换为 chroot。");
+                : "⚠ 未开启 chroot：Android 开发已置灰（JVM 需 root 域）。\nROOT 面板可切换为 chroot。");
         chrootWarn.setTextColor(chrootOn ? 0xFFAAAAAA : 0xFFFF6B6B);
         chrootWarn.setTextSize(13);
         chrootWarn.setLineSpacing(0, 1.2f);
@@ -1336,7 +1293,7 @@ public class MainActivity extends Activity {
         // （JVM 需 root 域 execmem，proot + SELinux enforcing 下 mprotect RWX 被拒无法启动）；
         // Python/Node/Go/C-C++/通用工具 安装与运行均不依赖。
         // envs 第 5 列：关键命令（安装前检测半装：数据库标记已装但文件缺失 → 自动清理重装）
-        String[][] envs = {
+        String[][] builtin = {
                 {"Android 开发", "openjdk17-jdk gradle android-tools",
                         "JDK17 + Gradle + adb/fastboot（安卓应用构建）", "1", "java gradle adb"},
                 {"Python 开发", "python3 py3-pip", "Python3 + pip", "0", "python3 pip3"},
@@ -1345,6 +1302,32 @@ public class MainActivity extends Activity {
                 {"C/C++ 开发", "gcc g++ make musl-dev", "GCC/G++ + Make + 头文件", "0", "gcc g++ make"},
                 {"通用工具", "git vim curl wget zip unzip", "Git/Vim/curl/wget 等", "0", "git vim curl wget zip unzip"},
         };
+        // 合并模板导入的自定义环境（持久化于本地偏好，重启 app 保留）
+        java.util.List<String[]> envListAll = new java.util.ArrayList<>();
+        Collections.addAll(envListAll, builtin);
+        envListAll.addAll(loadCustomEnvs());
+        final String[][] envs = envListAll.toArray(new String[0][]);
+        // ---- 模板区：下载模板（.rsxmenv）+ 导入模板 ----
+        LinearLayout tplRow = new LinearLayout(this);
+        tplRow.setOrientation(LinearLayout.HORIZONTAL);
+        Button dlBtn = createDarkButton("下载模板");
+        dlBtn.setOnClickListener(v -> downloadEnvTemplate());
+        Button impBtn = createDarkButton("导入模板");
+        impBtn.setOnClickListener(v -> {
+            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            i.addCategory(Intent.CATEGORY_OPENABLE);
+            i.setType("*/*");
+            try {
+                startActivityForResult(i, REQ_IMPORT_ENV_TEMPLATE);
+            } catch (Exception e) {
+                pushOutput("\r\n[无法打开文件选择器: " + e.getMessage() + "]\r\n");
+            }
+        });
+        tplRow.addView(dlBtn, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        tplRow.addView(impBtn, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        panel.addView(tplRow);
+        panel.addView(createDarkTip("模板（.rsxmenv）可自定义环境：下载模板 → 配置 apk 包 → 导入后即可安装。\n"
+                + "chroot=1 的环境需先在 ROOT 面板开启 chroot 模式。"));
         // ---- 已安装列表（固定高度 + 二级滑动；每行 名称/状态/删除）----
         panel.addView(createDarkTip("已安装环境（可删除）："));
         final ScrollView envScroll = new ScrollView(this);
@@ -1365,6 +1348,133 @@ public class MainActivity extends Activity {
             progressText.setText("安装进行中，请稍候...");
         }
         showPanel("开发环境", panel, null);
+    }
+
+    /** 开发环境模板（.rsxmenv）默认内容：下载模板时写入，用户编辑后导入添加自定义环境 */
+    private static final String ENV_TEMPLATE_CONTENT =
+            "# RSXM 开发环境模板（.rsxmenv）\n"
+            + "# 配置后保存，在「开发环境」面板点「导入模板」选择此文件即可添加自定义环境\n"
+            + "# name：环境名（显示用）\n"
+            + "# packages：apk 包列表（空格分隔）\n"
+            + "# description：描述\n"
+            + "# chroot：1=依赖 chroot 运行模式，0=不依赖\n"
+            + "# key_commands：关键命令（空格分隔，用于已装检测）\n"
+            + "name=myenv\n"
+            + "packages=git curl\n"
+            + "description=我的自定义开发环境\n"
+            + "chroot=0\n"
+            + "key_commands=git curl\n";
+
+    /** 读取持久化的自定义环境（模板导入，SharedPreferences JSON），返回 {name, packages, desc, chroot, keyCmds}[] */
+    private List<String[]> loadCustomEnvs() {
+        List<String[]> out = new ArrayList<>();
+        try {
+            String raw = getSharedPreferences("prefs", MODE_PRIVATE).getString("custom_dev_envs", "[]");
+            org.json.JSONArray arr = new org.json.JSONArray(raw);
+            for (int i = 0; i < arr.length(); i++) {
+                org.json.JSONObject o = arr.getJSONObject(i);
+                out.add(new String[]{
+                        o.optString("name", ""),
+                        o.optString("packages", ""),
+                        o.optString("description", ""),
+                        o.optString("chroot", "0"),
+                        o.optString("keyCmds", "")});
+            }
+        } catch (Exception ignored) {}
+        return out;
+    }
+
+    /** 持久化自定义环境列表 */
+    private void saveCustomEnvs(List<String[]> envs) {
+        try {
+            org.json.JSONArray arr = new org.json.JSONArray();
+            for (String[] e : envs) {
+                org.json.JSONObject o = new org.json.JSONObject();
+                o.put("name", e[0]);
+                o.put("packages", e[1]);
+                o.put("description", e[2]);
+                o.put("chroot", e[3]);
+                o.put("keyCmds", e[4]);
+                arr.put(o);
+            }
+            getSharedPreferences("prefs", MODE_PRIVATE).edit().putString("custom_dev_envs", arr.toString()).apply();
+        } catch (Exception ignored) {}
+    }
+
+    /** 解析 .rsxmenv 模板文本：返回 {name, packages, desc, chroot, keyCmds}，缺 name/packages 返回 null */
+    private String[] parseEnvTemplate(String content) {
+        String name = "", packages = "", desc = "", chroot = "0", cmds = "";
+        for (String l : content.split("\n")) {
+            String t = l.trim();
+            if (t.isEmpty() || t.startsWith("#")) continue;
+            int eq = t.indexOf('=');
+            if (eq < 0) continue;
+            String k = t.substring(0, eq).trim();
+            String v = t.substring(eq + 1).trim();
+            if (k.equals("name")) name = v;
+            else if (k.equals("packages")) packages = v;
+            else if (k.equals("description")) desc = v;
+            else if (k.equals("chroot")) chroot = v.equals("1") ? "1" : "0";
+            else if (k.equals("key_commands")) cmds = v;
+        }
+        if (name.isEmpty() || packages.isEmpty()) return null;
+        if (cmds.isEmpty()) cmds = packages.split(" ")[0];   // 缺省用第一个包作为关键命令
+        return new String[]{name, packages, desc, chroot, cmds};
+    }
+
+    /** 下载开发环境模板：系统保存选择器（SAF），默认文件名 dev-env-template.rsxmenv */
+    private void downloadEnvTemplate() {
+        Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("text/*");
+        i.putExtra(Intent.EXTRA_TITLE, "dev-env-template.rsxmenv");
+        try {
+            startActivityForResult(i, REQ_CREATE_ENV_TEMPLATE);
+        } catch (Exception e) {
+            pushOutput("\r\n[无法打开保存选择器: " + e.getMessage() + "]\r\n");
+        }
+    }
+
+    /** 导入开发环境模板：读取 .rsxmenv → 解析 → 持久化（同名覆盖）→ 重建面板显示新环境 */
+    private void importEnvTemplate(Uri uri) {
+        new Thread(() -> {
+            try {
+                String content;
+                try (InputStream is = getContentResolver().openInputStream(uri)) {
+                    if (is == null) {
+                        runOnUiThread(() -> pushOutput("\r\n[导入失败: 无法读取所选文件]\r\n"));
+                        return;
+                    }
+                    BufferedReader r = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8));
+                    StringBuilder sb = new StringBuilder();
+                    String line;
+                    while ((line = r.readLine()) != null) sb.append(line).append('\n');
+                    content = sb.toString();
+                }
+                final String[] env = parseEnvTemplate(content);
+                if (env == null) {
+                    runOnUiThread(() -> pushOutput("\r\n[模板无效：缺少 name 或 packages 字段]\r\n"));
+                    return;
+                }
+                List<String[]> customs = loadCustomEnvs();
+                boolean replaced = false;
+                for (int i = 0; i < customs.size(); i++) {
+                    if (customs.get(i)[0].equals(env[0])) { customs.set(i, env); replaced = true; }
+                }
+                if (!replaced) customs.add(env);
+                saveCustomEnvs(customs);
+                final boolean replacedFinal = replaced;
+                runOnUiThread(() -> {
+                    pushOutput("\r\n[已导入环境模板 " + env[0]
+                            + (replacedFinal ? "（同名已覆盖）" : "") + "，可点「安装」开始安装]\r\n");
+                    hidePanel();
+                    showDevEnvDialog();   // 重建面板，列表显示新环境
+                });
+            } catch (Exception e) {
+                Log.e(TAG, "import env template failed", e);
+                runOnUiThread(() -> pushOutput("\r\n[导入模板失败: " + e.getMessage() + "]\r\n"));
+            }
+        }, "env-template-import").start();
     }
 
     /** 安装开发环境：guest 内 nohup 后台 apk add（防服务循环 20s timeout 杀掉长安装），
@@ -1498,7 +1608,9 @@ public class MainActivity extends Activity {
         container.addView(createDarkTip("检测中..."));
         new Thread(() -> {
             try {
-                char[] tags = {'A', 'P', 'N', 'G', 'C', 'T'};
+                // 标签动态生成：内置+自定义环境都可能超过 6 个（A-Z 后接 a-z，最多 52 个）
+                char[] tags = new char[envs.length];
+                for (int i = 0; i < envs.length; i++) tags[i] = (char)(i < 26 ? 'A' + i : 'a' + (i - 26));
                 StringBuilder cmd = new StringBuilder("ok(){ command -v $1 >/dev/null 2>&1 && echo -n 1 || echo -n 0; }; ");
                 for (int i = 0; i < envs.length && i < tags.length; i++) {
                     cmd.append("echo ").append(tags[i]).append(":$(ok ")
@@ -1536,6 +1648,9 @@ public class MainActivity extends Activity {
                                      View progressBox, TextView progressTitle,
                                      ProgressBar progressBar, TextView progressText) {
         container.removeAllViews();
+        // 自定义环境名集合（模板导入）：未安装时额外提供「移除」按钮，可彻底剔除模板条目
+        java.util.Set<String> customNames = new java.util.HashSet<>();
+        for (String[] ce : loadCustomEnvs()) customNames.add(ce[0]);
         for (int i = 0; i < envs.length; i++) {
             final String[] e = envs[i];
             LinearLayout row = new LinearLayout(this);
@@ -1555,6 +1670,11 @@ public class MainActivity extends Activity {
                 inst.setOnClickListener(v -> installDevEnv(e[0], e[1], e[4],
                         progressBox, progressTitle, progressBar, progressText, container, envs));
                 row.addView(inst);
+                if (customNames.contains(e[0])) {
+                    Button rm = createDarkButton("移除");
+                    rm.setOnClickListener(v -> removeCustomEnv(e[0]));
+                    row.addView(rm);
+                }
             }
             if (installed[i] || partial[i]) {
                 Button del = createDarkButton("删除");
@@ -1564,6 +1684,20 @@ public class MainActivity extends Activity {
             }
             container.addView(row);
         }
+    }
+
+    /** 移除自定义环境模板：从持久化列表剔除并重建面板（已装的 apk 请先点「删除」） */
+    private void removeCustomEnv(String name) {
+        List<String[]> customs = loadCustomEnvs();
+        boolean removed = false;
+        for (int i = 0; i < customs.size(); i++) {
+            if (customs.get(i)[0].equals(name)) { customs.remove(i); removed = true; break; }
+        }
+        if (!removed) return;
+        saveCustomEnvs(customs);
+        pushOutput("\r\n[已移除自定义环境 " + name + "]\r\n");
+        hidePanel();
+        showDevEnvDialog();
     }
 
     /** 删除开发环境：guest 内 nohup apk del，完成后刷新已安装列表 */
@@ -1763,7 +1897,7 @@ public class MainActivity extends Activity {
         });
         panel.addView(szBtn);
         // 全屏面板展示（取代系统弹窗，避免遮挡控件）
-        showPanel("ADB 无线调试", panel, this::stopAdbStatusRefresh);
+        showPanel("ADB 调试", panel, this::stopAdbStatusRefresh);
         // 状态实时刷新：面板打开期间每 4 秒用 adb devices 检查真实连接（防快照过期）
         startAdbStatusRefresh(statusLine);
         // 操作逻辑优化：状态未知（首次/环境刚启动）时自动触发一次检测，免去手动点击
@@ -2078,9 +2212,83 @@ public class MainActivity extends Activity {
     }
 
     /** API Key 配置：读取/修改 reasonix 的 DEEPSEEK_API_KEY */
+    /** 解析 config.toml 当前 default_model（provider name，无则默认 deepseek-flash） */
+    private String parseDefaultModel(File conf) {
+        if (conf != null && conf.exists()) {
+            try {
+                for (String l : new String(java.nio.file.Files.readAllBytes(conf.toPath()),
+                        StandardCharsets.UTF_8).split("\n")) {
+                    String t = l.trim();
+                    if (t.startsWith("default_model")) {
+                        java.util.regex.Matcher m = java.util.regex.Pattern
+                                .compile("default_model\\s*=\\s*\"([^\"]+)\"").matcher(t);
+                        if (m.find()) return m.group(1);
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+        return "deepseek-flash";
+    }
+
+    /** 解析 config.toml [[providers]] 块：返回 {providerName, model} 列表 */
+    private List<String[]> parseProviders(File conf) {
+        List<String[]> list = new ArrayList<>();
+        if (conf != null && conf.exists()) {
+            try {
+                String name = null, model = null;
+                for (String l : new String(java.nio.file.Files.readAllBytes(conf.toPath()),
+                        StandardCharsets.UTF_8).split("\n")) {
+                    String t = l.trim();
+                    if (t.startsWith("[[providers]]")) {
+                        if (name != null && model != null) list.add(new String[]{name, model});
+                        name = null; model = null;
+                    } else if (name == null && t.matches("name\\s*=.*")) {
+                        java.util.regex.Matcher m = java.util.regex.Pattern.compile("^name\\s*=\\s*\"([^\"]+)\"").matcher(t);
+                        if (m.find()) name = m.group(1);
+                    } else if (model == null && t.matches("model\\s*=.*")) {
+                        java.util.regex.Matcher m = java.util.regex.Pattern.compile("^model\\s*=\\s*\"([^\"]+)\"").matcher(t);
+                        if (m.find()) model = m.group(1);
+                    }
+                }
+                if (name != null && model != null) list.add(new String[]{name, model});
+            } catch (Exception ignored) {}
+        }
+        return list;
+    }
+
+    /** 改写 config.toml 的 default_model（provider name），返回是否成功 */
+    private boolean setDefaultModel(File conf, String providerName) {
+        try {
+            if (conf == null || !conf.exists()) return false;
+            List<String> lines = new ArrayList<>(java.nio.file.Files.readAllLines(conf.toPath(), StandardCharsets.UTF_8));
+            boolean ok = false;
+            for (int i = 0; i < lines.size(); i++) {
+                if (lines.get(i).trim().startsWith("default_model")) {
+                    lines.set(i, "default_model = \"" + providerName + "\"");
+                    ok = true;
+                    break;
+                }
+            }
+            if (!ok) {
+                // TOML 顶层键必须在所有 [section] 之前：找不到 default_model 时插到第一个 section 前，无 section 追加末尾
+                int insert = lines.size();
+                for (int i = 0; i < lines.size(); i++) {
+                    if (lines.get(i).trim().startsWith("[")) { insert = i; break; }
+                }
+                lines.add(insert, "default_model = \"" + providerName + "\"");
+            }
+            java.nio.file.Files.write(conf.toPath(), String.join("\n", lines).getBytes(StandardCharsets.UTF_8));
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "set default model failed", e);
+            return false;
+        }
+    }
+
     private void showApiKeyConfigDialog() {
         File rootfs = new File(getFilesDir(), "rootfs");
         File env = new File(new File(rootfs, "root/.reasonix"), ".env");
+        File conf = new File(new File(rootfs, "root/.reasonix"), "config.toml");
         String current = "";
         if (env.exists()) {
             try {
@@ -2091,26 +2299,57 @@ public class MainActivity extends Activity {
                 }
             } catch (Exception ignored) {}
         }
+        // 模型列表：解析 config.toml providers；解析不到时用内置 DeepSeek 两档
+        final List<String[]> models = parseProviders(conf);
+        if (models.isEmpty()) {
+            models.add(new String[]{"deepseek-flash", "deepseek-v4-flash"});
+            models.add(new String[]{"deepseek-pro", "deepseek-v4-pro"});
+        }
+        final String curModel = parseDefaultModel(conf);
+        int curIdx = 0;
+        List<String> display = new ArrayList<>();
+        for (int i = 0; i < models.size(); i++) {
+            display.add(models.get(i)[1] + "（" + models.get(i)[0] + "）");
+            if (models.get(i)[0].equals(curModel)) curIdx = i;
+        }
         EditText input = createDarkEditText("粘贴 DeepSeek API Key",
                 InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         if (!current.isEmpty()) input.setText(current);
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(dp(16), dp(8), dp(16), 0);
-        panel.addView(createDarkTip("当前模型：deepseek-v4-flash（api.deepseek.com）"));
+        panel.addView(createDarkTip("模型与 API Key（api.deepseek.com）。切换模型保存后重启环境生效。"));
+        // 模型选择
+        TextView modelLabel = new TextView(this);
+        modelLabel.setText("选择模型：");
+        modelLabel.setTextColor(0xFFAAAAAA);
+        modelLabel.setTextSize(13);
+        panel.addView(modelLabel);
+        final Spinner modelSpinner = new Spinner(this);
+        modelSpinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, display));
+        modelSpinner.setSelection(curIdx);
+        panel.addView(modelSpinner, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
         panel.addView(input);
         addRechargeGuide(panel);
         Button saveBtn = createDarkButton("保存");
         saveBtn.setOnClickListener(v -> {
             String key = input.getText().toString().trim();
-            if (key.isEmpty()) return;
+            if (key.isEmpty()) {
+                pushOutput("\r\n[请填写 API Key]\r\n");
+                return;
+            }
             try {
                 env.getParentFile().mkdirs();
                 java.nio.file.Files.write(env.toPath(),
                         ("DEEPSEEK_API_KEY=" + key + "\n").getBytes(StandardCharsets.UTF_8));
-                Log.d(TAG, "API key updated");
+                int sel = modelSpinner.getSelectedItemPosition();
+                String provider = models.get(Math.max(0, Math.min(sel, models.size() - 1)))[0];
+                boolean modelOk = setDefaultModel(conf, provider);
+                Log.d(TAG, "API key + model updated: " + provider + " modelOk=" + modelOk);
                 hidePanel();
-                pushOutput("\r\n[API Key 已更新，正在重启环境...]\r\n");
+                pushOutput("\r\n[API Key 已更新" + (modelOk ? "，模型 " + provider : "，但模型写入失败（config.toml 未生成？）")
+                        + "，正在重启环境...]\r\n");
                 restartEnvironment();
             } catch (Exception e) {
                 Log.e(TAG, "save api key failed", e);
@@ -2118,7 +2357,7 @@ public class MainActivity extends Activity {
         });
         panel.addView(saveBtn);
         // 全屏面板展示（取代系统弹窗，避免遮挡控件）
-        showPanel("API Key 配置", panel, null);
+        showPanel("API Key", panel, null);
     }
 
     /** 从 Go 二进制提取模块版本（buildinfo：`mod\t...\tvX.Y.Z`，位于文件尾部） */
@@ -2226,7 +2465,7 @@ public class MainActivity extends Activity {
         });
         panel.addView(restoreBtn);
         // 全屏面板展示（取代系统弹窗，避免遮挡控件）
-        showPanel("更新 reasonix", panel, null);
+        showPanel("更新 Reasonix", panel, null);
     }
 
     /** 从网络下载 reasonix 更新包（tar.gz），解压提取二进制并覆盖 guest 内版本 */
@@ -2350,16 +2589,21 @@ public class MainActivity extends Activity {
             File rootfs = new File(getFilesDir(), "rootfs");
             File rx = new File(new File(rootfs, "usr/local/bin"), "reasonix");
             rx.getParentFile().mkdirs();
-            try (InputStream in = getContentResolver().openInputStream(uri);
-                 OutputStream out = new FileOutputStream(rx)) {
-                byte[] buf = new byte[65536];
-                int n;
-                long total = 0;
-                while ((n = in.read(buf)) > 0) {
-                    out.write(buf, 0, n);
-                    total += n;
+            try (InputStream in = getContentResolver().openInputStream(uri)) {
+                if (in == null) {
+                    pushOutput("\r\n[更新失败: 无法读取所选文件]\r\n");
+                    return;
                 }
-                Log.d(TAG, "reasonix updated, size=" + total);
+                try (OutputStream out = new FileOutputStream(rx)) {
+                    byte[] buf = new byte[65536];
+                    int n;
+                    long total = 0;
+                    while ((n = in.read(buf)) > 0) {
+                        out.write(buf, 0, n);
+                        total += n;
+                    }
+                    Log.d(TAG, "reasonix updated, size=" + total);
+                }
             }
             rx.setExecutable(true, false);
             pushOutput("\r\n[reasonix 已更新（" + rx.length() + " 字节），正在重启环境...]\r\n");
@@ -2376,6 +2620,20 @@ public class MainActivity extends Activity {
             applyReasonixUpdate(data.getData());
         } else if (requestCode == REQ_SKILL_IMPORT && resultCode == RESULT_OK && data != null && data.getData() != null) {
             importSkillFromUri(data.getData());
+        } else if (requestCode == REQ_CREATE_ENV_TEMPLATE && resultCode == RESULT_OK && data != null && data.getData() != null) {
+            try (OutputStream os = getContentResolver().openOutputStream(data.getData())) {
+                if (os != null) {
+                    os.write(ENV_TEMPLATE_CONTENT.getBytes(StandardCharsets.UTF_8));
+                    pushOutput("\r\n[模板已保存（.rsxmenv），编辑后可在开发环境面板「导入模板」导入]\r\n");
+                } else {
+                    pushOutput("\r\n[保存模板失败: 无法写入所选位置]\r\n");
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "save env template failed", e);
+                pushOutput("\r\n[保存模板失败: " + e.getMessage() + "]\r\n");
+            }
+        } else if (requestCode == REQ_IMPORT_ENV_TEMPLATE && resultCode == RESULT_OK && data != null && data.getData() != null) {
+            importEnvTemplate(data.getData());
         }
     }
 

@@ -100,7 +100,7 @@
                         android:background="#141414"
                         android:gravity="center_vertical"
                         android:paddingLeft="16dp"
-                        android:text="ADB 无线调试"
+                        android:text="ADB 调试"
                         android:textColor="#FFFFFF"
                         android:textSize="15sp" />
 
@@ -112,7 +112,7 @@
                         android:layout_marginTop="1dp"
                         android:gravity="center_vertical"
                         android:paddingLeft="16dp"
-                        android:text="API Key 配置"
+                        android:text="API Key"
                         android:textColor="#FFFFFF"
                         android:textSize="15sp" />
 
@@ -124,7 +124,7 @@
                         android:layout_marginTop="1dp"
                         android:gravity="center_vertical"
                         android:paddingLeft="16dp"
-                        android:text="更新 reasonix"
+                        android:text="更新 Reasonix"
                         android:textColor="#FFFFFF"
                         android:textSize="15sp" />
 
@@ -160,7 +160,7 @@
                         android:layout_marginTop="1dp"
                         android:gravity="center_vertical"
                         android:paddingLeft="16dp"
-                        android:text="SKILL 功能"
+                        android:text="SKILL"
                         android:textColor="#FFFFFF"
                         android:textSize="15sp" />
 
@@ -172,7 +172,7 @@
                         android:layout_marginTop="1dp"
                         android:gravity="center_vertical"
                         android:paddingLeft="16dp"
-                        android:text="后台运行模式：关"
+                        android:text="后台运行：关"
                         android:textColor="#FFFFFF"
                         android:textSize="15sp" />
 
@@ -184,7 +184,7 @@
                         android:layout_marginTop="1dp"
                         android:gravity="center_vertical"
                         android:paddingLeft="16dp"
-                        android:text="YOLO 免审批模式：开"
+                        android:text="YOLO 免审批：开"
                         android:textColor="#FFFFFF"
                         android:textSize="15sp" />
 
@@ -196,7 +196,7 @@
                         android:layout_marginTop="1dp"
                         android:gravity="center_vertical"
                         android:paddingLeft="16dp"
-                        android:text="ROOT 功能"
+                        android:text="ROOT"
                         android:textColor="#FFFFFF"
                         android:textSize="15sp" />
                 </LinearLayout>
