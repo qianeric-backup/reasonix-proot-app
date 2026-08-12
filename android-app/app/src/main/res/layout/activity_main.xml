@@ -153,6 +153,18 @@
                         android:textSize="15sp" />
 
                     <TextView
+                        android:id="@+id/menu_sessions"
+                        android:layout_width="match_parent"
+                        android:layout_height="52dp"
+                        android:background="#141414"
+                        android:layout_marginTop="1dp"
+                        android:gravity="center_vertical"
+                        android:paddingLeft="16dp"
+                        android:text="会话"
+                        android:textColor="#FFFFFF"
+                        android:textSize="15sp" />
+
+                    <TextView
                         android:id="@+id/menu_skill"
                         android:layout_width="match_parent"
                         android:layout_height="52dp"

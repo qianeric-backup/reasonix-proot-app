@@ -385,10 +385,19 @@ if [ -x /usr/local/bin/reasonix ]; then
     fi
     cat > /usr/local/bin/reasonix <<'SH'
 #!/bin/sh
-# reasonix wrapper: rx-wrap rsxm-yolo —— 清理会话恢复标记 + 项目位置 + 审批模式
+# reasonix wrapper: rx-wrap rsxm-yolo —— 清理会话恢复标记 + 项目位置 + 审批模式 + 会话恢复
 rm -f /root/.reasonix/projects/*/sessions/*.recovery.json \
       /root/.reasonix/projects/*/sessions/*.recovery \
       /root/.reasonix/projects/*/sessions/*.lease.* 2>/dev/null
+# 会话恢复：App 侧滑「会话」面板把会话 jsonl 绝对路径写入 /root/.rsxm-resume，
+# 存在则 --resume 继续该会话（聊天记录保留）。一次性：读取后立即删除标记，
+# 下次启动仍为全新会话。
+RESUME=""
+if [ -f /root/.rsxm-resume ]; then
+    RESUME=$(head -1 /root/.rsxm-resume 2>/dev/null | tr -d '\r\n')
+    rm -f /root/.rsxm-resume
+    [ -n "$RESUME" ] && [ -e "$RESUME" ] || RESUME=""
+fi
 # 项目位置：/root/.rsxm-project 存在时 cd 到该项目目录（reasonix 按 cwd 识别项目）；
 # 目录不存在则自动创建（App 侧可能只写标记未建目录）
 P=$(cat /root/.rsxm-project 2>/dev/null)
@@ -399,9 +408,17 @@ fi
 # 审批模式（App 侧滑栏「YOLO 免审批模式」开关写 /root/.rsxm-yolo 标记）：
 #   标记存在 → bypassPermissions（完全跳过工具审批）；否则 → auto（自动批准普通工具，保留安全规则）
 if [ -f /root/.rsxm-yolo ]; then
-    exec /usr/local/bin/reasonix.bin --permission-mode bypassPermissions "$@"
+    if [ -n "$RESUME" ]; then
+        exec /usr/local/bin/reasonix.bin --permission-mode bypassPermissions --resume "$RESUME" "$@"
+    else
+        exec /usr/local/bin/reasonix.bin --permission-mode bypassPermissions "$@"
+    fi
 else
-    exec /usr/local/bin/reasonix.bin --permission-mode auto "$@"
+    if [ -n "$RESUME" ]; then
+        exec /usr/local/bin/reasonix.bin --permission-mode auto --resume "$RESUME" "$@"
+    else
+        exec /usr/local/bin/reasonix.bin --permission-mode auto "$@"
+    fi
 fi
 SH
     chmod 755 /usr/local/bin/reasonix

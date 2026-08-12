@@ -228,6 +228,7 @@ public class MainActivity extends Activity {
         findViewById(R.id.menu_root).setOnClickListener(v -> { drawerLayout.closeDrawer(GravityCompat.START, false); showRootDialog(); });
         findViewById(R.id.menu_skill).setOnClickListener(v -> { drawerLayout.closeDrawer(GravityCompat.START, false); showSkillInstallDialog(); });
         findViewById(R.id.menu_project).setOnClickListener(v -> { drawerLayout.closeDrawer(GravityCompat.START, false); showProjectDialog(); });
+        findViewById(R.id.menu_sessions).setOnClickListener(v -> { drawerLayout.closeDrawer(GravityCompat.START, false); showSessionsDialog(); });
         findViewById(R.id.menu_dev).setOnClickListener(v -> { drawerLayout.closeDrawer(GravityCompat.START, false); showDevEnvDialog(); });
 
         // 全屏功能面板：返回按钮关闭（系统返回键同样生效）
@@ -1005,6 +1006,239 @@ public class MainActivity extends Activity {
         addV(panel, refreshBtn, 8);
         loadProjectList(curView, listBox);
         showPanel("项目", panel, null);
+    }
+
+    /** 会话面板：列出 ~/.reasonix/projects/<项目>/sessions/ 下的历史会话（聊天记录），
+     *  按项目分组显示（时间 + 预览）。点击「继续」写 /root/.rsxm-resume 标记并重启环境，
+     *  entry.sh wrapper 用 `--resume <jsonl路径>` 恢复该会话；「删除」移入 sessions/.trash 回收站；
+     *  「新建会话」清除恢复标记后重启，进入全新会话。 */
+    private void showSessionsDialog() {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(16), dp(8), dp(16), dp(12));
+        panel.addView(createDarkTip(
+                "reasonix 会话（聊天记录）按项目保存在 ~/.reasonix/projects/<项目>/sessions/，"
+                        + "退出 reasonix 即自动保存。\n"
+                        + "「继续」恢复该会话聊天（重启环境生效）；「删除」移入回收站；「新建会话」开始全新对话。"));
+        panel.addView(createDarkSectionTitle("历史会话"));
+        final ScrollView listScroll = new ScrollView(this);
+        final LinearLayout listBox = new LinearLayout(this);
+        listBox.setOrientation(LinearLayout.VERTICAL);
+        listScroll.addView(listBox);
+        LinearLayout.LayoutParams listLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(300));
+        listLp.topMargin = dp(6);
+        panel.addView(listScroll, listLp);
+        Button newBtn = createDarkButton("新建会话（清除恢复标记，重启进入全新会话）");
+        newBtn.setOnClickListener(v -> {
+            try {
+                File rootDir = new File(new File(getFilesDir(), "rootfs"), "root");
+                new File(rootDir, ".rsxm-resume").delete();
+                pushOutput("\r\n[已清除会话恢复标记，重启后开始全新会话]\r\n");
+                restartEnvironment();
+            } catch (Exception e) {
+                Log.e(TAG, "new session failed", e);
+            }
+        });
+        addV(panel, newBtn, 8);
+        Button refreshBtn = createDarkButton("刷新会话列表");
+        refreshBtn.setOnClickListener(v -> loadSessions(listBox));
+        addV(panel, refreshBtn, 8);
+        loadSessions(listBox);
+        showPanel("会话", panel, null);
+    }
+
+    /** 宿主侧遍历 rootfs 的 ~/.reasonix/projects 下各项目 sessions 目录中的 .jsonl 会话文件
+     *  （排除回收站、恢复分支、隐藏文件），按项目分组渲染：每行「时间 + 预览」+ 继续/删除按钮。 */
+    private void loadSessions(LinearLayout container) {
+        container.removeAllViews();
+        container.addView(createDarkTip("加载中..."));
+        new Thread(() -> {
+            try {
+                File rootDir = new File(new File(getFilesDir(), "rootfs"), "root");
+                File projectsDir = new File(new File(rootDir, ".reasonix"), "projects");
+                final java.util.List<String[]> groups = new java.util.ArrayList<>(); // {项目标签, jsonl绝对路径, 时间, 预览}
+                if (projectsDir.isDirectory()) {
+                    File[] pds = projectsDir.listFiles(File::isDirectory);
+                    if (pds != null) {
+                        java.util.Arrays.sort(pds, java.util.Comparator.comparing(File::getName));
+                        for (File pd : pds) {
+                            File sessions = new File(pd, "sessions");
+                            File[] files = sessions.listFiles((d, n) ->
+                                    n.endsWith(".jsonl") && !n.startsWith(".")
+                                            && !n.endsWith(".events.jsonl") && !n.endsWith(".conflicts.jsonl")
+                                            && !n.endsWith(".recovery.json") && !n.endsWith(".recovery")
+                                            && !n.contains(".lease."));
+                            if (files == null || files.length == 0) continue;
+                            java.util.Arrays.sort(files, java.util.Comparator.comparingLong(File::lastModified).reversed());
+                            String label = projectLabel(pd.getName());
+                            for (File f : files) {
+                                groups.add(new String[]{label, f.getAbsolutePath(),
+                                        fmtSessionTime(f.lastModified()), sessionPreview(f)});
+                            }
+                        }
+                    }
+                }
+                runOnUiThread(() -> {
+                    container.removeAllViews();
+                    if (groups.isEmpty()) {
+                        container.addView(createDarkTip("（暂无历史会话，reasonix 会话会自动保存到这里）"));
+                        return;
+                    }
+                    String lastProj = null;
+                    for (String[] g : groups) {
+                        if (!g[0].equals(lastProj)) {
+                            lastProj = g[0];
+                            TextView t = new TextView(this);
+                            t.setText("项目 " + g[0]);
+                            t.setTextColor(0xFF7FDB8A);
+                            t.setTextSize(13);
+                            t.setTypeface(null, android.graphics.Typeface.BOLD);
+                            t.setPadding(0, dp(10), 0, dp(2));
+                            container.addView(t);
+                        }
+                        container.addView(sessionRow(g, container));
+                    }
+                });
+            } catch (Exception e) {
+                Log.e(TAG, "load sessions failed", e);
+                runOnUiThread(() -> {
+                    container.removeAllViews();
+                    container.addView(createDarkTip("（加载失败：" + e.getMessage() + "）"));
+                });
+            }
+        }, "session-load").start();
+    }
+
+    /** 会话行：时间 + 预览 + 「继续」「删除」 */
+    private View sessionRow(String[] g, LinearLayout container) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.VERTICAL);
+        row.setBackgroundColor(0xFF141414);
+        row.setPadding(dp(10), dp(6), dp(10), dp(6));
+        LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        rp.bottomMargin = dp(4);
+        row.setLayoutParams(rp);
+        TextView info = new TextView(this);
+        info.setText(g[2] + "\n" + g[3]);
+        info.setTextColor(0xFFE0E0E0);
+        info.setTextSize(13);
+        info.setLineSpacing(0, 1.1f);
+        row.addView(info);
+        LinearLayout btns = new LinearLayout(this);
+        btns.setOrientation(LinearLayout.HORIZONTAL);
+        Button cont = createDarkButton("继续");
+        cont.setOnClickListener(v -> {
+            try {
+                File rootDir = new File(new File(getFilesDir(), "rootfs"), "root");
+                // guest 内路径：rootDir（宿主 rootfs/root）对应 guest /root
+                String abs = new File(g[1]).getAbsolutePath();
+                String rel = abs.substring(rootDir.getAbsolutePath().length());
+                String guestPath = "/root" + rel;
+                java.nio.file.Files.write(new File(rootDir, ".rsxm-resume").toPath(),
+                        guestPath.getBytes(StandardCharsets.UTF_8));
+                pushOutput("\r\n[恢复会话: " + g[0] + " " + g[2] + "]\r\n");
+                restartEnvironment();
+            } catch (Exception e) {
+                Log.e(TAG, "resume session failed", e);
+                pushOutput("\r\n[恢复失败: " + e.getMessage() + "]\r\n");
+            }
+        });
+        Button del = createDarkButton("删除");
+        del.setOnClickListener(v -> {
+            final File f = new File(g[1]);
+            // 后台线程执行：chroot 模式会话为 root 属主 600，renameTo 必失败且 root 桥 su 可能耗时数秒，不能阻塞 UI
+            new Thread(() -> {
+                try {
+                    File trash = new File(f.getParentFile(), ".trash");
+                    trash.mkdirs();
+                    boolean ok = f.renameTo(new File(trash, f.getName()));
+                    if (!ok) {
+                        execRootCommand("mkdir -p '" + sq(trash.getAbsolutePath()) + "' && mv '"
+                                + sq(f.getAbsolutePath()) + "' '" + sq(trash.getAbsolutePath()) + "/' 2>&1", 10);
+                        ok = !f.exists();
+                    }
+                    final boolean r = ok;
+                    runOnUiThread(() -> {
+                        pushOutput("\r\n[会话" + (r ? "已移入回收站" : "删除失败") + ": " + g[2] + "]\r\n");
+                        loadSessions(container);
+                    });
+                } catch (Exception e) {
+                    Log.e(TAG, "delete session failed", e);
+                }
+            }, "session-del").start();
+        });
+        btns.addView(cont);
+        btns.addView(del);
+        row.addView(btns);
+        return row;
+    }
+
+    /** 项目 key 目录名 → 可读项目路径（reasonix key = 路径转义：\\→-、冒号去掉、字母小写；
+     *  仅解码已知前缀，其余原样显示） */
+    private static String projectLabel(String key) {
+        String k = key.toLowerCase(java.util.Locale.US);
+        if (k.startsWith("-sdcard-reasonixprojects-"))
+            return "/sdcard/ReasonixProjects/" + key.substring("-sdcard-ReasonixProjects-".length());
+        if (k.startsWith("-root-"))
+            return "/root/" + key.substring("-root-".length());
+        if (k.equals("-root")) return "/root";
+        return key;
+    }
+
+    /** 会话时间：文件最后修改时间 → "MM-dd HH:mm" */
+    private static String fmtSessionTime(long t) {
+        return java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm")
+                .format(java.time.Instant.ofEpochMilli(t).atZone(java.time.ZoneId.systemDefault()));
+    }
+
+    /** shell 单引号转义（root 桥命令拼接防注入/防路径含引号破坏命令） */
+    private static String sq(String s) {
+        return s.replace("'", "'\\''");
+    }
+
+    /** 会话预览：jsonl 第一条 user 消息文本（截断 50 字符）。
+     *  chroot 模式下会话为 root 属主 600，宿主直读失败时经 root 桥 chmod 后重读。 */
+    private String sessionPreview(File f) {
+        byte[] head = readSessionHead(f);
+        if (head == null) return "(读取失败，无 root 权限)";
+        String text = new String(head, StandardCharsets.UTF_8);
+        for (String line : text.split("\n")) {
+            line = line.trim();
+            if (!line.startsWith("{")) continue;
+            try {
+                org.json.JSONObject o = new org.json.JSONObject(line);
+                if ("user".equals(o.optString("role"))) {
+                    Object c = o.opt("content");
+                    String s = (c instanceof String) ? (String) c : String.valueOf(c);
+                    s = s.replaceAll("\\s+", " ").trim();
+                    if (s.length() > 50) s = s.substring(0, 50) + "…";
+                    return s.isEmpty() ? "(空)" : s;
+                }
+            } catch (Exception ignore) { }
+        }
+        return "(无文本内容)";
+    }
+
+    /** 读会话文件头部（前 64KB）；宿主直读失败（chroot 模式 root 属主 600）→ root 桥 chmod 后重读 */
+    private byte[] readSessionHead(File f) {
+        for (int attempt = 0; attempt < 2; attempt++) {
+            try (java.io.FileInputStream in = new java.io.FileInputStream(f)) {
+                byte[] buf = new byte[65536];
+                int n = in.read(buf);
+                byte[] out = new byte[Math.max(n, 0)];
+                if (n > 0) System.arraycopy(buf, 0, out, 0, n);
+                return out;
+            } catch (Exception e) {
+                if (attempt == 0) {
+                    execRootCommand("chmod a+r '" + sq(f.getAbsolutePath()) + "' 2>/dev/null", 8);
+                } else {
+                    return null;
+                }
+            }
+        }
+        return null;
     }
 
     /** 加载项目列表（内置 /root 与手机 /sdcard/ReasonixProjects），渲染到容器 */
