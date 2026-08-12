@@ -10,9 +10,9 @@ android {
         applicationId "com.rsxm.app"
         minSdk 26
         targetSdk 34
-        // 版本随 GitHub Release 同步更新（当前 v1.10）
-        versionCode 10
-        versionName "1.10"
+        // 版本随 GitHub Release 同步更新（当前 v1.11）
+        versionCode 11
+        versionName "1.11"
     }
 
     buildTypes {
