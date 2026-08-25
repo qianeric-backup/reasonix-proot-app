@@ -200,6 +200,45 @@
                         android:textColor="#FFFFFF"
                         android:textSize="15sp" />
 
+                    <!-- 上下滑动调速 -->
+                    <LinearLayout
+                        android:id="@+id/menu_speed"
+                        android:layout_width="match_parent"
+                        android:layout_height="72dp"
+                        android:background="#141414"
+                        android:layout_marginTop="1dp"
+                        android:orientation="vertical"
+                        android:gravity="center_vertical"
+                        android:paddingLeft="16dp"
+                        android:paddingRight="12dp">
+
+                        <TextView
+                            android:id="@+id/tv_speed_label"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="滑动速度"
+                            android:textColor="#FFFFFF"
+                            android:textSize="14sp" />
+
+                        <TextView
+                            android:id="@+id/tv_speed_value"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="当前：5 档"
+                            android:textColor="#8A8A8A"
+                            android:textSize="12sp" />
+
+                        <SeekBar
+                            android:id="@+id/sb_speed"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:max="9"
+                            android:progress="4"
+                            android:paddingTop="2dp"
+                            android:paddingBottom="0dp" />
+                    </LinearLayout>
+
                     <TextView
                         android:id="@+id/menu_root"
                         android:layout_width="match_parent"

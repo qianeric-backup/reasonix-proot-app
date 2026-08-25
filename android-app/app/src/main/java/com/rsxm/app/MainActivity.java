@@ -23,6 +23,7 @@ import android.text.InputType;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.widget.CheckBox;
+import android.widget.SeekBar;
 import android.util.Base64;
 import android.util.Log;
 import android.view.View;
@@ -80,7 +81,17 @@ public class MainActivity extends Activity {
     private static final int REQ_IMPORT_ENV_TEMPLATE = 203;
     /** 官方更新源：@reasonix/cli-linux-arm64（npm 平台二进制包，npmmirror 国内镜像） */
     private static final String REASONIX_DEFAULT_URL =
-            "https://registry.npmmirror.com/@reasonix/cli-linux-arm64/-/cli-linux-arm64-1.21.1.tgz";
+            "https://registry.npmmirror.com/@reasonix/cli-linux-arm64/-/cli-linux-arm64-1.31.4.tgz";
+    /**
+     * 上下滑动调速档位：1~10（prefs 键 scroll_speed，默认 5）。
+     * 档位越小滑动越慢：SCROLL_STEP = 档位换算的每页滑动像素数
+     *  档位 1 → 500px/页（最慢，精细浏览）
+     *  档位 5 → 100px/页（默认，翻看历史）
+     *  档位 10 → 10px/页（最快，接近原版 8px/页）
+     */
+    public static final int SPEED_MIN = 1;
+    public static final int SPEED_MAX = 10;
+    public static final int SPEED_DEFAULT = 5;
 
     private WebView webView;
     // proot 进程与输入流静态持有：后台运行模式下与 Activity 生命周期解耦，
@@ -148,6 +159,9 @@ public class MainActivity extends Activity {
             public void onPageFinished(WebView view, String url) {
                 Log.d(TAG, "onPageFinished: " + url);
                 pageLoaded = true;
+                // 页面(重)加载完成后注入当前滑动调速档位（WebView 重载后 JS 变量重置）
+                applyScrollSpeed(getSharedPreferences("prefs", MODE_PRIVATE)
+                        .getInt("scroll_speed", SPEED_DEFAULT));
                 // 聚焦 WebView 触发 xterm 渲染，避免启动后需点击才显示 CLI 界面
                 try { view.requestFocus(); } catch (Exception ignored) {}
                 if (reuseEnv) {
@@ -225,6 +239,32 @@ public class MainActivity extends Activity {
         updateYoloModeLabel();
         // 升级安装后 rootfs 可能没有 YOLO 标记：以偏好为准补写（默认开启）
         syncYoloMark(getSharedPreferences("prefs", MODE_PRIVATE).getBoolean("yolo_mode", true));
+        // 上下滑动调速：SeekBar 档位 1~10 ⇄ 每页滑动像素数 SCROLL_STEP
+        // 档位越小每页所需像素越多 → 滑动越慢（精细浏览）；档位越大越快。
+        // 换算：SCROLL_STEP = 1000 / 档位（见 scrollStepForSpeed：
+        //       档位 1 → 500px/页（最慢） 5 → 100px/页（默认） 10 → 10px/页（最快，接近原 8px/页）
+        {
+            final SeekBar sbSpeed = findViewById(R.id.sb_speed);
+            final TextView tvSpeedValue = findViewById(R.id.tv_speed_value);
+            int speed = getSharedPreferences("prefs", MODE_PRIVATE).getInt("scroll_speed", SPEED_DEFAULT);
+            if (speed < SPEED_MIN) speed = SPEED_MIN;
+            if (speed > SPEED_MAX) speed = SPEED_MAX;
+            sbSpeed.setMax(SPEED_MAX - SPEED_MIN);
+            sbSpeed.setProgress(speed - SPEED_MIN);
+            updateSpeedLabel(speed);
+            // 先注入当前档位（页面可能已加载；若未加载，onPageFinished 启动环境时也会注入）
+            applyScrollSpeed(speed);
+            sbSpeed.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+                @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {}
+                @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+                @Override public void onStopTrackingTouch(SeekBar seekBar) {
+                    int speed = seekBar.getProgress() + SPEED_MIN;
+                    getSharedPreferences("prefs", MODE_PRIVATE).edit().putInt("scroll_speed", speed).apply();
+                    applyScrollSpeed(speed);
+                    updateSpeedLabel(speed);
+                }
+            });
+        }
         findViewById(R.id.menu_root).setOnClickListener(v -> { drawerLayout.closeDrawer(GravityCompat.START, false); showRootDialog(); });
         findViewById(R.id.menu_skill).setOnClickListener(v -> { drawerLayout.closeDrawer(GravityCompat.START, false); showSkillInstallDialog(); });
         findViewById(R.id.menu_project).setOnClickListener(v -> { drawerLayout.closeDrawer(GravityCompat.START, false); showProjectDialog(); });
@@ -522,6 +562,38 @@ public class MainActivity extends Activity {
         }
     }
 
+    // ---- 上下滑动调速 ----
+
+    /**
+     * 档位(1~10) → 每页滑动像素数：SCROLL_STEP = 1000 / 档位。
+     * 档位 1 → 500px/页（最慢，精细浏览）；档位 5 → 100px/页（默认）；
+     * 档位 10 → 10px/页（最快，接近原固定 8px/页的翻动速度）。
+     */
+    private static int scrollStepForSpeed(int speed) {
+        if (speed < SPEED_MIN) speed = SPEED_MIN;
+        if (speed > SPEED_MAX) speed = SPEED_MAX;
+        return 1000 / speed;
+    }
+
+    /** 把当前档位换算的 SCROLL_STEP 注入 xterm.js（JS 函数 setScrollStep 已暴露） */
+    private void applyScrollSpeed(int speed) {
+        int step = scrollStepForSpeed(speed);
+        if (webView == null) return;
+        ui.post(() -> {
+            try {
+                webView.evaluateJavascript("window.setScrollStep(" + step + ")", null);
+            } catch (Exception ignored) {}
+        });
+    }
+
+    /** 更新菜单里的档位显示文本 */
+    private void updateSpeedLabel(int speed) {
+        TextView tv = findViewById(R.id.tv_speed_value);
+        if (tv != null) {
+            tv.setText("当前：" + speed + " 档（滑动" + (speed >= 7 ? "较快" : speed <= 3 ? "较慢" : "适中") + "）");
+        }
+    }
+
     /** 同步 YOLO 开关到 rootfs 标记（/root/.rsxm-yolo），reasonix wrapper 每次启动时读取决定审批模式 */
     private void syncYoloMark(boolean on) {
         try {
@@ -574,30 +646,6 @@ public class MainActivity extends Activity {
     /** dp 转 px */
     private int dp(float v) {
         return (int) (v * getResources().getDisplayMetrics().density + 0.5f);
-    }
-
-    /** 在 API Key 面板内嵌充值方式指引（内置在应用内，含打开充值页按钮） */
-    private void addRechargeGuide(LinearLayout panel) {
-        TextView title = new TextView(this);
-        title.setText("充值方式（DeepSeek 开放平台）");
-        title.setTextColor(0xFFFFFFFF);
-        title.setTextSize(13);
-        title.setTypeface(null, android.graphics.Typeface.BOLD);
-        title.setPadding(dp(2), dp(14), dp(2), dp(6));
-        panel.addView(title);
-        panel.addView(createDarkTip(
-                "platform.deepseek.com 登录 →「充值」（最低 ¥10，支付宝/微信）。\n"
-                        + "API Key 在「API Keys」页面创建后填入上方输入框。"));
-        Button openBtn = createDarkButton("打开充值页");
-        openBtn.setOnClickListener(v -> {
-            try {
-                startActivity(new Intent(Intent.ACTION_VIEW,
-                        Uri.parse("https://platform.deepseek.com/top_up")));
-            } catch (Exception e) {
-                Log.w(TAG, "open recharge page failed", e);
-            }
-        });
-        panel.addView(openBtn);
     }
 
     /** 安装 SKILL：skill 是 reasonix 的 AI 技能包（SKILL.md 规范格式），
@@ -2545,6 +2593,68 @@ public class MainActivity extends Activity {
         return list;
     }
 
+    /** Provider 配置信息（对应 config.toml 的一个 [[providers]] 块） */
+    private static class ProviderInfo {
+        String name;      // provider 名（default_model 引用）
+        String kind;      // anthropic | openai
+        String baseUrl;   // API 端点
+        String apiKeyEnv; // .env 中存储密钥的变量名
+        String model;     // 默认模型（default / model 字段）
+        List<String> models;   // models=[...] 列表（可选；为空时联网拉取或手工填）
+        ProviderInfo(String name, String kind, String baseUrl, String apiKeyEnv, String model) {
+            this(name, kind, baseUrl, apiKeyEnv, model, null);
+        }
+        ProviderInfo(String name, String kind, String baseUrl, String apiKeyEnv, String model, List<String> models) {
+            this.name = name; this.kind = kind; this.baseUrl = baseUrl;
+            this.apiKeyEnv = apiKeyEnv; this.model = model; this.models = models;
+        }
+    }
+
+    /** 解析 config.toml 全部 [[providers]] 块，返回含 name/kind/base_url/api_key_env/model/models 的完整信息 */
+    private List<ProviderInfo> parseProviderInfos(File conf) {
+        List<ProviderInfo> list = new ArrayList<>();
+        if (conf != null && conf.exists()) {
+            try {
+                String name = null, kind = null, baseUrl = null, apiKeyEnv = null, model = null;
+                List<String> models = null;
+                for (String l : new String(java.nio.file.Files.readAllBytes(conf.toPath()),
+                        StandardCharsets.UTF_8).split("\n")) {
+                    String t = l.trim();
+                    if (t.startsWith("[[providers]]")) {
+                        if (name != null) list.add(new ProviderInfo(name, kind, baseUrl, apiKeyEnv, model, models));
+                        name = null; kind = null; baseUrl = null; apiKeyEnv = null; model = null; models = null;
+                        continue;
+                    }
+                    if (t.startsWith("[")) continue;   // 其他 section 块跳过
+                    java.util.regex.Matcher m;
+                    if (name == null && (m = java.util.regex.Pattern.compile("^name\\s*=\\s*\"([^\"]+)\"").matcher(t)).find()) {
+                        name = m.group(1);
+                    } else if (kind == null && (m = java.util.regex.Pattern.compile("^kind\\s*=\\s*\"([^\"]+)\"").matcher(t)).find()) {
+                        kind = m.group(1);
+                    } else if (baseUrl == null && (m = java.util.regex.Pattern.compile("^base_url\\s*=\\s*\"([^\"]+)\"").matcher(t)).find()) {
+                        baseUrl = m.group(1);
+                    } else if (apiKeyEnv == null && (m = java.util.regex.Pattern.compile("^api_key_env\\s*=\\s*\"([^\"]+)\"").matcher(t)).find()) {
+                        apiKeyEnv = m.group(1);
+                    } else if (model == null && (m = java.util.regex.Pattern.compile("^(?:default|model)\\s*=\\s*\"([^\"]+)\"").matcher(t)).find()) {
+                        model = m.group(1);
+                    } else if (models == null && t.startsWith("models")) {
+                        // models = [ "a", "b", ... ]
+                        java.util.regex.Matcher ms = java.util.regex.Pattern
+                                .compile("models\\s*=\\s*\\[(.*)\\]", java.util.regex.Pattern.DOTALL).matcher(t);
+                        if (ms.find()) {
+                            models = new ArrayList<>();
+                            java.util.regex.Matcher item = java.util.regex.Pattern
+                                    .compile("\"([^\"]+)\"").matcher(ms.group(1));
+                            while (item.find()) models.add(item.group(1));
+                        }
+                    }
+                }
+                if (name != null) list.add(new ProviderInfo(name, kind, baseUrl, apiKeyEnv, model, models));
+            } catch (Exception ignored) {}
+        }
+        return list;
+    }
+
     /** 改写 config.toml 的 default_model（provider name），返回是否成功 */
     private boolean setDefaultModel(File conf, String providerName) {
         try {
@@ -2574,43 +2684,305 @@ public class MainActivity extends Activity {
         }
     }
 
+    /** 读取 .env 中指定变量的值（无则返回空串） */
+    private String readApiKeyFromEnv(File env, String varName) {
+        if (env == null || !env.exists() || varName == null || varName.isEmpty()) return "";
+        try {
+            for (String line : new String(java.nio.file.Files.readAllBytes(env.toPath()),
+                    StandardCharsets.UTF_8).split("\n")) {
+                String t = line.trim();
+                if (t.startsWith(varName + "=")) {
+                    return t.substring(varName.length() + 1).trim();
+                }
+            }
+        } catch (Exception ignored) {}
+        return "";
+    }
+
+    /** 加载 provider 的可选模型到模型 Spinner：静态 models 优先，否则联网拉取，失败兜底静态表。
+     *  供切换 provider 与点击「刷新模型列表」复用。 */
+    private void loadModelsForProvider(final ProviderInfo p, final File env,
+                                       final ArrayAdapter<String> modelAdapter, final Spinner modelSpinner) {
+        if (p == null) return;
+        // 静态 models 已配：直接填充（无需联网）
+        if (p.models != null && !p.models.isEmpty()) {
+            final List<String> list = p.models;
+            runOnUiThread(() -> {
+                modelAdapter.clear();
+                for (String s : list) modelAdapter.add(s);
+                modelAdapter.notifyDataSetChanged();
+                int idx = 0;
+                if (p.model != null) {
+                    for (int i = 0; i < list.size(); i++) {
+                        if (list.get(i).equals(p.model)) { idx = i; break; }
+                    }
+                }
+                modelSpinner.setSelection(idx);
+            });
+            return;
+        }
+        // 无静态列表：异步联网拉取；失败不兜底（保持空列表，不显示任何模型）
+        new Thread(() -> {
+            String key = readApiKeyFromEnv(env, p.apiKeyEnv);
+            List<String> fetched = fetchModelsFromProvider(p.baseUrl, key, p.kind);
+            final List<String> finalList = (fetched != null) ? fetched : new ArrayList<String>();
+            runOnUiThread(() -> {
+                modelAdapter.clear();
+                for (String s : finalList) modelAdapter.add(s);
+                modelAdapter.notifyDataSetChanged();
+                int idx = 0;
+                if (p.model != null) {
+                    for (int i = 0; i < finalList.size(); i++) {
+                        if (finalList.get(i).equals(p.model)) { idx = i; break; }
+                    }
+                }
+                modelSpinner.setSelection(idx);
+            });
+        }, "rx-load-models").start();
+    }
+
+    /** 改写 config.toml 中指定 provider 块的 default 字段（默认模型名），返回是否成功 */
+    private boolean setProviderDefaultModel(File conf, String providerName, String modelName) {
+        try {
+            if (conf == null || !conf.exists() || providerName == null || modelName == null) return false;
+            List<String> lines = new ArrayList<>(java.nio.file.Files.readAllLines(conf.toPath(), StandardCharsets.UTF_8));
+            boolean inTarget = false, found = false;
+            for (int i = 0; i < lines.size(); i++) {
+                String t = lines.get(i).trim();
+                if (t.startsWith("[[providers]]")) {
+                    inTarget = false;
+                } else if (t.startsWith("[")) {
+                    continue;
+                } else if (inTarget && t.startsWith("name =")) {
+                    java.util.regex.Matcher m = java.util.regex.Pattern
+                            .compile("^name\\s*=\\s*\"([^\"]+)\"").matcher(t);
+                    if (m.find() && m.group(1).equals(providerName)) inTarget = true;
+                }
+                if (inTarget && t.startsWith("default =")) {
+                    lines.set(i, "default     = \"" + modelName + "\"");
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                // 未找到 default 字段：在目标 provider 块内追加（定位到该块 api_key_env 行后）
+                int insertAfter = -1;
+                for (int i = 0; i < lines.size(); i++) {
+                    String t = lines.get(i).trim();
+                    if (t.startsWith("[[providers]]")) {
+                        insertAfter = -1;
+                    } else if (t.startsWith("[")) {
+                        continue;
+                    } else if (t.startsWith("name =")) {
+                        java.util.regex.Matcher m = java.util.regex.Pattern
+                                .compile("^name\\s*=\\s*\"([^\"]+)\"").matcher(t);
+                        if (m.find() && m.group(1).equals(providerName)) insertAfter = i;
+                    } else if (insertAfter >= 0) {
+                        insertAfter = i;
+                    }
+                }
+                if (insertAfter >= 0) {
+                    lines.add(insertAfter + 1, "default     = \"" + modelName + "\"");
+                    found = true;
+                }
+            }
+            if (found) {
+                java.nio.file.Files.write(conf.toPath(), String.join("\n", lines).getBytes(StandardCharsets.UTF_8));
+                return true;
+            }
+            return false;
+        } catch (Exception e) {
+            Log.e(TAG, "set provider default model failed", e);
+            return false;
+        }
+    }
+
+    /** 联网拉取可选模型列表：GET {base_url}/models（OpenAI 兼容），解析 data[].id；失败返回 null。
+     *  若 base_url 命中已知厂商域名且拉取失败，返回内置静态模型表兜底（保证面板仍可选）。 */
+    private List<String> fetchModelsFromProvider(String baseUrl, String apiKey, String kind) {
+        List<String> models = new ArrayList<>();
+        if (baseUrl == null || baseUrl.isEmpty()) return null;
+        String url = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
+        if (!url.endsWith("/models")) url += "/models";
+        try {
+            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+            conn.setConnectTimeout(8000);
+            conn.setReadTimeout(8000);
+            conn.setRequestMethod("GET");
+            if (apiKey != null && !apiKey.isEmpty()) {
+                conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+            }
+            conn.setRequestProperty("Accept", "application/json");
+            int code = conn.getResponseCode();
+            if (code == 200) {
+                java.io.InputStream in = conn.getInputStream();
+                StringBuilder sb = new StringBuilder();
+                byte[] buf = new byte[4096];
+                int n;
+                while ((n = in.read(buf)) > 0) sb.append(new String(buf, 0, n, StandardCharsets.UTF_8));
+                String body = sb.toString();
+                // data: [ {"id":"model-a","object":"model",...}, ... ]
+                java.util.regex.Matcher m = java.util.regex.Pattern
+                        .compile("\"id\"\\s*:\\s*\"([^\"]+)\"").matcher(body);
+                while (m.find()) models.add(m.group(1));
+                if (!models.isEmpty()) return models;
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "fetch models failed: " + url, e);
+        }
+        // 不要兜底：无法联网/无 /models 时返回 null（UI 保持空列表，不显示任何模型）
+        return null;
+    }
+
+
+    /** 写入/更新 .env 变量：保留已有其他变量，替换同名旧值，追加新变量 */
+    private void upsertEnvVariable(File env, String varName, String value) {
+        try {
+            if (env == null) return;
+            env.getParentFile().mkdirs();
+            List<String> lines = env.exists()
+                    ? new ArrayList<>(java.nio.file.Files.readAllLines(env.toPath(), StandardCharsets.UTF_8))
+                    : new ArrayList<>();
+            boolean replaced = false;
+            for (int i = 0; i < lines.size(); i++) {
+                if (lines.get(i).trim().startsWith(varName + "=") ||
+                        lines.get(i).trim().equals(varName)) {
+                    lines.set(i, varName + "=" + value);
+                    replaced = true;
+                    break;
+                }
+            }
+            if (!replaced) lines.add(varName + "=" + value);
+            java.nio.file.Files.write(env.toPath(), String.join("\n", lines).getBytes(StandardCharsets.UTF_8));
+        } catch (Exception e) {
+            Log.e(TAG, "upsert env variable failed", e);
+        }
+    }
+
+    /** 追加一个 [[providers]] 块到 config.toml（末尾），返回是否成功 */
+    private boolean addProviderToConfig(File conf, ProviderInfo p) {
+        try {
+            if (conf == null) return false;
+            conf.getParentFile().mkdirs();
+            StringBuilder sb = new StringBuilder();
+            sb.append("\n[[providers]]\n");
+            sb.append("name        = \"").append(p.name).append("\"\n");
+            sb.append("kind        = \"").append(p.kind == null || p.kind.isEmpty() ? "openai" : p.kind).append("\"\n");
+            sb.append("base_url    = \"").append(p.baseUrl).append("\"\n");
+            sb.append("model       = \"").append(p.model).append("\"\n");
+            sb.append("api_key_env = \"").append(p.apiKeyEnv).append("\"\n");
+            java.nio.file.Files.write(conf.toPath(),
+                    ((conf.exists() ? "\n" : "") + sb.toString()).getBytes(StandardCharsets.UTF_8),
+                    conf.exists()
+                            ? java.nio.file.StandardOpenOption.APPEND
+                            : java.nio.file.StandardOpenOption.CREATE);
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "add provider to config failed", e);
+            return false;
+        }
+    }
+
+    /** 从 config.toml 移除指定 provider 块（name 匹配），返回是否删除成功 */
+    private boolean removeProviderFromConfig(File conf, ProviderInfo p) {
+        try {
+            if (conf == null || !conf.exists()) return false;
+            if (p == null || p.name == null) return false;
+            List<String> lines = new ArrayList<>(java.nio.file.Files.readAllLines(conf.toPath(), StandardCharsets.UTF_8));
+            List<Integer> dropIdx = new ArrayList<>();
+            for (int i = 0; i < lines.size(); i++) {
+                String t = lines.get(i).trim();
+                if (!t.startsWith("[[providers]]")) continue;
+                // 块边界：下一个 [[providers]] 或任何 [section]（含 [x] 单括号开头）
+                int j = i;
+                boolean target = false, hasName = false;
+                while (j < lines.size()) {
+                    String tj = lines.get(j).trim();
+                    if (j > i && (tj.startsWith("[[providers]]") || tj.startsWith("["))) {
+                        break;   // 到达块尾
+                    }
+                    if (!hasName && tj.startsWith("name")) {
+                        java.util.regex.Matcher m = java.util.regex.Pattern
+                                .compile("^name\s*=\s*\"([^\"]+)\"").matcher(tj);
+                        if (m.find() && m.group(1).equals(p.name)) target = true;
+                        hasName = true;
+                    }
+                    j++;
+                }
+                if (target) {
+                    for (int k = i; k < j; k++) dropIdx.add(k);
+                }
+                i = j - 1;
+            }
+            if (dropIdx.isEmpty()) return false;
+            java.util.Set<Integer> dropSet = new java.util.HashSet<>(dropIdx);
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < lines.size(); i++) {
+                if (!dropSet.contains(i)) {
+                    sb.append(lines.get(i));
+                    if (i < lines.size() - 1) sb.append("\n");
+                }
+            }
+            java.nio.file.Files.write(conf.toPath(), sb.toString().getBytes(StandardCharsets.UTF_8));
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "remove provider from config failed", e);
+            return false;
+        }
+    }
+
+    /** 从 .env 删除指定变量行，返回是否成功 */
+    private boolean removeEnvVariable(File env, String varName) {
+        try {
+            if (env == null || !env.exists() || varName == null || varName.isEmpty()) return false;
+            List<String> lines = new ArrayList<>(java.nio.file.Files.readAllLines(env.toPath(), StandardCharsets.UTF_8));
+            boolean removed = false;
+            List<String> out = new ArrayList<>();
+            for (String l : lines) {
+                String t = l.trim();
+                if (t.startsWith(varName + "=") || t.equals(varName)) { removed = true; continue; }
+                out.add(l);
+            }
+            java.nio.file.Files.write(env.toPath(), String.join("\n", out).getBytes(StandardCharsets.UTF_8));
+            return removed;
+        } catch (Exception e) {
+            Log.e(TAG, "remove env variable failed", e);
+            return false;
+        }
+    }
+
     private void showApiKeyConfigDialog() {
         File rootfs = new File(getFilesDir(), "rootfs");
         File env = new File(new File(rootfs, "root/.reasonix"), ".env");
         File conf = new File(new File(rootfs, "root/.reasonix"), "config.toml");
-        String current = "";
-        if (env.exists()) {
-            try {
-                for (String line : new String(java.nio.file.Files.readAllBytes(env.toPath()), StandardCharsets.UTF_8).split("\n")) {
-                    if (line.startsWith("DEEPSEEK_API_KEY=")) {
-                        current = line.substring("DEEPSEEK_API_KEY=".length()).trim();
-                    }
-                }
-            } catch (Exception ignored) {}
-        }
-        // 模型列表：解析 config.toml providers；解析不到时用内置 DeepSeek 两档
-        final List<String[]> models = parseProviders(conf);
-        if (models.isEmpty()) {
-            models.add(new String[]{"deepseek-flash", "deepseek-v4-flash"});
-            models.add(new String[]{"deepseek-pro", "deepseek-v4-pro"});
+        // Provider 列表：解析 config.toml [[providers]]（含 deepseek 及其他 AI）
+        final List<ProviderInfo> providers = parseProviderInfos(conf);
+        if (providers.isEmpty()) {
+            // 解析不到（config.toml 未生成/被删）时用内置 DeepSeek 两档兜底
+            providers.add(new ProviderInfo("deepseek-flash", "anthropic",
+                    "https://api.deepseek.com/anthropic", "DEEPSEEK_API_KEY", "deepseek-v4-flash"));
+            providers.add(new ProviderInfo("deepseek-pro", "anthropic",
+                    "https://api.deepseek.com/anthropic", "DEEPSEEK_API_KEY", "deepseek-v4-pro"));
         }
         final String curModel = parseDefaultModel(conf);
         int curIdx = 0;
         List<String> display = new ArrayList<>();
-        for (int i = 0; i < models.size(); i++) {
-            display.add(models.get(i)[1] + "（" + models.get(i)[0] + "）");
-            if (models.get(i)[0].equals(curModel)) curIdx = i;
+        for (int i = 0; i < providers.size(); i++) {
+            ProviderInfo p = providers.get(i);
+            display.add(p.name + "（" + (p.baseUrl != null ? p.baseUrl : "") + "）");
+            if (p.name.equals(curModel)) curIdx = i;
         }
-        EditText input = createDarkEditText("粘贴 DeepSeek API Key",
+        // API Key 输入框：随选中的 provider 切换 hint（api_key_env 变量名）与已存值
+        EditText input = createDarkEditText("粘贴 API Key",
                 InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        if (!current.isEmpty()) input.setText(current);
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(dp(16), dp(8), dp(16), dp(12));
-        panel.addView(createDarkTip("模型与 API Key（api.deepseek.com）。切换模型保存后重启环境生效。"));
-        // 模型选择
-        panel.addView(createDarkSectionTitle("选择模型"));
-        final Spinner modelSpinner = new Spinner(this);
+        panel.addView(createDarkTip("选择 AI Provider 并填写其 API Key（支持 DeepSeek 及其他任意 OpenAI/Anthropic 兼容服务，"
+                + "如 Kimi、GLM、MiniMax、OpenRouter 等。可在「+ 新增 Provider」里配置自定义端点）。切换后保存重启生效。"));
+        // Provider 选择
+        panel.addView(createDarkSectionTitle("选择 Provider"));
+        final Spinner providerSpinner = new Spinner(this);
         // 深色适配：选中项白字、块状深灰底（与输入框一致），下拉项白字
         ArrayAdapter<String> spinnerAdapter = new ArrayAdapter<String>(
                 this, android.R.layout.simple_spinner_item, display) {
@@ -2625,32 +2997,105 @@ public class MainActivity extends Activity {
             }
         };
         spinnerAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-        modelSpinner.setAdapter(spinnerAdapter);
-        modelSpinner.setSelection(curIdx);
+        providerSpinner.setAdapter(spinnerAdapter);
+        providerSpinner.setSelection(curIdx);
         LinearLayout.LayoutParams spinnerLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
         spinnerLp.topMargin = dp(6);
-        panel.addView(modelSpinner, spinnerLp);
+        panel.addView(providerSpinner, spinnerLp);
+        // API Key：填写所选 provider 的密钥（api_key_env 变量），保存后写入 .env
         panel.addView(createDarkSectionTitle("API Key"));
         addV(panel, input, 6);
-        addRechargeGuide(panel);
+        // 默认模型：来自 provider 块 models 列表，或联网拉取（失败不兜底，保持空列表）
+        panel.addView(createDarkSectionTitle("默认模型"));
+        final Spinner modelSpinner = new Spinner(this);
+        final ArrayAdapter<String> modelAdapter = new ArrayAdapter<String>(
+                this, android.R.layout.simple_spinner_item, new ArrayList<String>()) {
+            @Override
+            public android.view.View getView(int pos, android.view.View cv, ViewGroup parent) {
+                TextView tv = (TextView) super.getView(pos, cv, parent);
+                tv.setTextColor(0xFFFFFFFF);
+                tv.setTextSize(14);
+                tv.setPadding(dp(14), dp(10), dp(14), dp(10));
+                tv.setBackgroundColor(0xFF1A1A1A);
+                return tv;
+            }
+        };
+        modelAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        modelSpinner.setAdapter(modelAdapter);
+        LinearLayout.LayoutParams modelLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
+        modelLp.topMargin = dp(6);
+        panel.addView(modelSpinner, modelLp);
+        // 刷新按钮：重新联网拉取该 provider 的模型列表
+        Button refreshModelBtn = createDarkButton("刷新模型列表");
+        refreshModelBtn.setOnClickListener(v -> {
+            int sel = providerSpinner.getSelectedItemPosition();
+            if (sel < 0 || sel >= providers.size()) return;
+            ProviderInfo p = providers.get(sel);
+            // 异步拉取，避免阻塞 UI
+            new Thread(() -> {
+                String key = readApiKeyFromEnv(env, p.apiKeyEnv);
+                List<String> fetched = fetchModelsFromProvider(p.baseUrl, key, p.kind);
+                // 不要兜底：拉取失败/无 /models 时保持空列表（UI 不显示任何模型）
+                final List<String> finalList = (fetched != null) ? fetched : new ArrayList<String>();
+                runOnUiThread(() -> {
+                    modelAdapter.clear();
+                    for (String s : finalList) modelAdapter.add(s);
+                    modelAdapter.notifyDataSetChanged();
+                    // 尝试选中当前默认模型
+                    int idx = 0;
+                    if (p.model != null) {
+                        for (int i = 0; i < finalList.size(); i++) {
+                            if (finalList.get(i).equals(p.model)) { idx = i; break; }
+                        }
+                    }
+                    modelSpinner.setSelection(idx);
+                });
+            }, "rx-fetch-models").start();
+        });
+        addV(panel, refreshModelBtn, 4);
+        // 切换 Provider：更新 hint（api_key_env 变量名）与已存值回显
+        providerSpinner.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(android.widget.AdapterView<?> parent, android.view.View view, int pos, long id) {
+                if (pos >= 0 && pos < providers.size()) {
+                    ProviderInfo p = providers.get(pos);
+                    String envName = (p.apiKeyEnv != null && !p.apiKeyEnv.isEmpty()) ? p.apiKeyEnv : "API_KEY";
+                    input.setHint("粘贴 " + envName + "（" + p.name + "）");
+                    String saved = readApiKeyFromEnv(env, envName);
+                    input.setText(saved);
+                    input.setSelection(saved.length());
+                    // 加载该 provider 的模型列表（静态 models 优先，否则联网拉取，失败兜底）
+                    loadModelsForProvider(p, env, modelAdapter, modelSpinner);
+                }
+            }
+            @Override
+            public void onNothingSelected(android.widget.AdapterView<?> parent) {}
+        });
         Button saveBtn = createDarkButton("保存");
         saveBtn.setOnClickListener(v -> {
+            int sel = providerSpinner.getSelectedItemPosition();
+            if (sel < 0 || sel >= providers.size()) return;
+            final ProviderInfo p = providers.get(sel);
             String key = input.getText().toString().trim();
             if (key.isEmpty()) {
-                pushOutput("\r\n[请填写 API Key]\r\n");
+                pushOutput("\r\n[请填写 " + (p.apiKeyEnv != null ? p.apiKeyEnv : "API") + " API Key]\r\n");
                 return;
             }
             try {
-                env.getParentFile().mkdirs();
-                java.nio.file.Files.write(env.toPath(),
-                        ("DEEPSEEK_API_KEY=" + key + "\n").getBytes(StandardCharsets.UTF_8));
-                int sel = modelSpinner.getSelectedItemPosition();
-                String provider = models.get(Math.max(0, Math.min(sel, models.size() - 1)))[0];
-                boolean modelOk = setDefaultModel(conf, provider);
-                Log.d(TAG, "API key + model updated: " + provider + " modelOk=" + modelOk);
+                // 写入 .env 对应变量（保留其他 provider 的 key）
+                upsertEnvVariable(env, p.apiKeyEnv, key);
+                // 同时写两层默认：顶层 default_model=provider 名 + provider 块 default=用户选中的模型
+                boolean modelOk = setDefaultModel(conf, p.name);
+                int mSel = modelSpinner.getSelectedItemPosition();
+                String chosenModel = mSel >= 0 ? (String) modelSpinner.getItemAtPosition(mSel) : null;
+                if (chosenModel != null && !chosenModel.isEmpty()) {
+                    modelOk = setProviderDefaultModel(conf, p.name, chosenModel) || modelOk;
+                }
+                Log.d(TAG, "API key + provider updated: " + p.name + " env=" + p.apiKeyEnv + " modelOk=" + modelOk);
                 hidePanel();
-                pushOutput("\r\n[API Key 已更新" + (modelOk ? "，模型 " + provider : "，但模型写入失败（config.toml 未生成？）")
+                pushOutput("\r\n[" + p.name + " API Key 已更新" + (modelOk ? "，已切换默认模型 " + (chosenModel != null ? chosenModel : p.name) : "，但默认模型写入失败（config.toml 未生成？）")
                         + "，正在重启环境...]\r\n");
                 restartEnvironment();
             } catch (Exception e) {
@@ -2658,8 +3103,147 @@ public class MainActivity extends Activity {
             }
         });
         addV(panel, saveBtn, 10);
+        // 新增 Provider 独立按钮：点击直接进入子表单（不再混入 Spinner 选项，避免歧义）
+        Button addBtn = createDarkButton("+ 新增 Provider…");
+        addBtn.setOnClickListener(v -> showAddProviderForm(providers, env, conf));
+        addV(panel, addBtn, 6);
+        // 删除 Provider 独立按钮：移除当前选中的 provider（config.toml 对应块 + .env 变量）
+        Button delBtn = createDarkButton("删除当前 Provider…");
+        delBtn.setTextColor(0xFFFF6B6B);  // 红色警示
+        delBtn.setOnClickListener(v -> {
+            int sel = providerSpinner.getSelectedItemPosition();
+            if (sel < 0 || sel >= providers.size()) return;
+            final ProviderInfo p = providers.get(sel);
+            new android.app.AlertDialog.Builder(this)
+                    .setTitle("删除 Provider")
+                    .setMessage("确定删除「" + p.name + "」（" + p.baseUrl + "）？\n"
+                            + "将从 config.toml 移除该 provider 块并删除 .env 中对应 API Key 变量。"
+                            + (curModel.equals(p.name) ? "\n\n注意：这是当前默认 provider，删除后需重新选择。"
+                            : ""))
+                    .setNegativeButton("取消", null)
+                    .setPositiveButton("删除", (d, w) -> {
+                        if (removeProviderFromConfig(conf, p) && removeEnvVariable(env, p.apiKeyEnv)) {
+                            providers.remove(sel);
+                            pushOutput("\r\n[Provider 已删除：" + p.name + "]\r\n");
+                            if (curModel.equals(p.name)) {
+                                // 删除的是当前默认：重置 default_model 为剩余的第一个（无则留空）
+                                boolean ok = false;
+                                if (!providers.isEmpty()) ok = setDefaultModel(conf, providers.get(0).name);
+                                pushOutput(ok ? "\r\n[默认 Provider 已切换为 " + providers.get(0).name + "]\r\n"
+                                        : "\r\n[config.toml 无剩余 provider（需重启后重新配置）]\r\n");
+                            }
+                            showApiKeyConfigDialog();  // 重开面板刷新列表
+                        } else {
+                            pushOutput("\r\n[Provider 删除失败（config.toml 或 .env 写入异常）]\r\n");
+                        }
+                    })
+                    .show();
+        });
+        addV(panel, delBtn, 6);
         // 全屏面板展示（取代系统弹窗，避免遮挡控件）
         showPanel("API Key", panel, null);
+    }
+
+    /** 「+ 新增 Provider」子表单：填写 name/kind/base_url/model/api_key_env 并保存到 config.toml */
+    private void showAddProviderForm(final List<ProviderInfo> providers, final File env, final File conf) {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(16), dp(8), dp(16), dp(12));
+        panel.addView(createDarkTip("新增 AI Provider（OpenAI 或 Anthropic 兼容端点）。"
+                + "填写后保存到 config.toml，随后在上一页选择该 Provider 填入 API Key。"));
+        panel.addView(createDarkSectionTitle("Provider 名称"));
+        final EditText nameInput = createDarkEditText("如 my-ai / kimi / glm（default_model 引用名）",
+                InputType.TYPE_CLASS_TEXT);
+        addV(panel, nameInput, 4);
+        panel.addView(createDarkSectionTitle("kind（协议）"));
+        final android.widget.EditText kindInput = createDarkEditText("anthropic 或 openai（默认 openai）",
+                InputType.TYPE_CLASS_TEXT);
+        addV(panel, kindInput, 4);
+        panel.addView(createDarkSectionTitle("base_url（API 端点）"));
+        final EditText urlInput = createDarkEditText("如 https://api.moonshot.cn/v1（OpenAI 兼容）",
+                InputType.TYPE_CLASS_TEXT);
+        addV(panel, urlInput, 4);
+        panel.addView(createDarkSectionTitle("默认模型"));
+        final Spinner modelSpinner = new Spinner(this);
+        final ArrayAdapter<String> modelAdapter = new ArrayAdapter<String>(
+                this, android.R.layout.simple_spinner_item, new ArrayList<String>()) {
+            @Override
+            public android.view.View getView(int pos, android.view.View cv, ViewGroup parent) {
+                TextView tv = (TextView) super.getView(pos, cv, parent);
+                tv.setTextColor(0xFFFFFFFF);
+                tv.setTextSize(14);
+                tv.setPadding(dp(14), dp(10), dp(14), dp(10));
+                tv.setBackgroundColor(0xFF1A1A1A);
+                return tv;
+            }
+        };
+        modelAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        modelSpinner.setAdapter(modelAdapter);
+        LinearLayout.LayoutParams modelLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
+        modelLp.topMargin = dp(6);
+        panel.addView(modelSpinner, modelLp);
+        panel.addView(createDarkSectionTitle("api_key_env（.env 变量名）"));
+        final EditText envInput = createDarkEditText("如 KIMI_API_KEY（大写字母数字下划线）",
+                InputType.TYPE_CLASS_TEXT);
+        addV(panel, envInput, 4);
+        // 「拉取模型」：读 base_url + .env 中该 api_key_env 的 key（可为空→静态表兜底）联网列出可选模型
+        Button pullBtn = createDarkButton("拉取模型");
+        pullBtn.setOnClickListener(v -> {
+            String baseUrl = urlInput.getText().toString().trim();
+            String envVar = envInput.getText().toString().trim();
+            String kind = kindInput.getText().toString().trim();
+            if (baseUrl.isEmpty() || envVar.isEmpty()) {
+                pushOutput("\r\n[请先填写 base_url 与 api_key_env，再拉取模型]\r\n");
+                return;
+            }
+            new Thread(() -> {
+                String key = readApiKeyFromEnv(env, envVar);
+                List<String> fetched = fetchModelsFromProvider(baseUrl, key, kind);
+                // 不要兜底：拉取失败/无 /models 时保持空列表（不显示任何模型）
+                final List<String> finalList = (fetched != null) ? fetched : new ArrayList<String>();
+                runOnUiThread(() -> {
+                    modelAdapter.clear();
+                    for (String s : finalList) modelAdapter.add(s);
+                    modelAdapter.notifyDataSetChanged();
+                    modelSpinner.setSelection(0);
+                });
+            }, "rx-pull-models").start();
+        });
+        addV(panel, pullBtn, 4);
+        Button okBtn = createDarkButton("保存 Provider");
+        okBtn.setOnClickListener(v -> {
+            String name = nameInput.getText().toString().trim();
+            String baseUrl = urlInput.getText().toString().trim();
+            String envVar = envInput.getText().toString().trim();
+            String kind = kindInput.getText().toString().trim();
+            // 默认模型：优先取 Spinner 选中项；未拉取时以 provider 名为默认（reasonix 以 provider 名解析）
+            String model = modelSpinner.getSelectedItem() != null
+                    ? modelSpinner.getSelectedItem().toString().trim() : "";
+            if (name.isEmpty() || baseUrl.isEmpty() || envVar.isEmpty()) {
+                pushOutput("\r\n[请填写 Provider 名称、base_url 与 api_key_env]\r\n");
+                return;
+            }
+            if (model.isEmpty()) model = name;
+            ProviderInfo np = new ProviderInfo(name, kind, baseUrl, envVar, model);
+            // 把拉取到的模型列表一并写入 provider 块（主面板可直接选中，无需再联网）
+            np.models = new ArrayList<>();
+            for (int i = 0; i < modelAdapter.getCount(); i++) {
+                String s = modelAdapter.getItem(i);
+                if (s != null && !s.isEmpty()) np.models.add(s);
+            }
+            if (addProviderToConfig(conf, np)) {
+                upsertEnvVariable(env, envVar, "");   // 预建空变量占位（用户回上一页填 key）
+                providers.add(np);
+                pushOutput("\r\n[Provider 已添加：" + name + "（" + baseUrl + "），回到上一页选择并填写 API Key]\r\n");
+                // 重开面板（选中新 provider）
+                showApiKeyConfigDialog();
+            } else {
+                pushOutput("\r\n[Provider 写入 config.toml 失败]\r\n");
+            }
+        });
+        addV(panel, okBtn, 10);
+        showPanel("新增 Provider", panel, null);
     }
 
     /** 从 Go 二进制提取模块版本（buildinfo：`mod\t...\tvX.Y.Z`，位于文件尾部） */
@@ -2704,7 +3288,7 @@ public class MainActivity extends Activity {
         String ver = (npmVer != null && !npmVer.isEmpty()) ? "v" + npmVer
                 : extractReasonixVersion(new File(new File(getFilesDir(), "rootfs/usr/local/bin"), "reasonix"));
         TextView verView = new TextView(this);
-        verView.setText("当前版本：" + (ver != null ? ver : "未知（内置 1.20.0）"));
+        verView.setText("当前版本：" + (ver != null ? ver : "未知（内置 1.31.4）"));
         verView.setTextColor(0xFF7FDB8A);
         verView.setTextSize(14);
         verView.setTypeface(null, android.graphics.Typeface.BOLD);
@@ -2803,8 +3387,7 @@ public class MainActivity extends Activity {
                     java.util.regex.Matcher mv = java.util.regex.Pattern
                             .compile("cli-linux-arm64-(\\d+\\.\\d+\\.\\d+)").matcher(url);
                     if (mv.find()) {
-                        java.nio.file.Files.write(new File(rootfs, "root/.reasonix/.npm-version").toPath(),
-                                mv.group(1).getBytes(StandardCharsets.UTF_8));
+                        writeNpmVersion(mv.group(1));
                     }
                 } catch (Exception ignored) {}
                 pushOutput("\r\n[reasonix 已更新（" + rx.length() + " 字节），正在重启环境...]\r\n");
@@ -2878,11 +3461,24 @@ public class MainActivity extends Activity {
             rx.getParentFile().mkdirs();
             extractAsset("usr/bin/reasonix", rx);
             rx.setExecutable(true, false);
+            // 重置版本标记为内置版（避免 UI 仍显示之前网络更新过的旧版本号）
+            writeNpmVersion("1.31.4");
             Log.d(TAG, "reasonix restored from bundle");
             pushOutput("\r\n[已恢复内置 reasonix，正在重启环境...]\r\n");
             restartEnvironment();
         } catch (Exception e) {
             Log.e(TAG, "restore reasonix failed", e);
+        }
+    }
+
+    /** 写入 reasonix npm 版本标记（rootfs/.reasonix/.npm-version，UI 显示友好版本用） */
+    private void writeNpmVersion(String ver) {
+        try {
+            File vf = new File(new File(new File(getFilesDir(), "rootfs/root"), ".reasonix"), ".npm-version");
+            vf.getParentFile().mkdirs();
+            java.nio.file.Files.write(vf.toPath(), ver.getBytes(StandardCharsets.UTF_8));
+        } catch (Exception e) {
+            Log.w(TAG, "write npm-version failed", e);
         }
     }
 
@@ -3203,7 +3799,7 @@ public class MainActivity extends Activity {
             return;
         }
         // 全新安装不再弹出 API Key 配置页面：直接启动环境。
-        // 用户可随时通过侧滑菜单「API Key 配置」面板填写 Key（面板内置充值指引）。
+        // 用户可随时通过侧滑菜单「API Key 配置」面板填写 Key。
         Log.d(TAG, "reasonix config missing, starting without API key dialog");
         safeStartProot();
     }
@@ -3354,6 +3950,8 @@ public class MainActivity extends Activity {
         rx.getParentFile().mkdirs();
         extractAsset("usr/bin/reasonix", rx);
         rx.setExecutable(true, false);
+        // 记录内置版本号（新装环境 UI「更新 Reasonix」面板显示内置 1.31.4）
+        writeNpmVersion("1.31.4");
         File bridge = new File(rootfs, "usr/bin/pty-bridge");
         bridge.delete();   // 防残留 exec 导致 ETXTBSY（unlink 正在执行的 inode 合法）
         extractAsset("usr/bin/pty-bridge", bridge);

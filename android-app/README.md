@@ -77,6 +77,8 @@ zig cc -target aarch64-linux-musl -O2 -static -pie -fPIE \
   PTY（reasonix 收到 SIGWINCH 自动重排布局）；旋转屏幕/软键盘弹出时自动重新适配。
 - **触摸滚动**：上下滑动浏览历史输出。reasonix TUI 内（alt screen）滑动会被转换为
   SGR 鼠标滚轮事件交给 reasonix 滚动；退出到 shell 后滑动直接滚动终端 scrollback。
+  侧滑菜单「滑动速度」提供档位 1~10（默认 5）调速：档位越低每页所需滑动像素越多，
+  滑动越慢越精细；档位 10 接近原版 8px/页的快速翻动。", "old_string": "- **触摸滚动**：上下滑动浏览历史输出。reasonix TUI 内（alt screen）滑动会被转换为\n  SGR 鼠标滚轮事件交给 reasonix 滚动；退出到 shell 后滑动直接滚动终端 scrollback。", "path": "android-app/README.md"}
 - **安装**：`adb install dist/reasonix-proot.apk`，或把 APK 传到手机直接安装。
 - 首次打开：自动解压 Linux 环境（约 30 秒），然后进入 reasonix。
 - 首次使用 reasonix：先运行 `reasonix setup` 配置 Provider 与模型（需要网络 + API key）。
