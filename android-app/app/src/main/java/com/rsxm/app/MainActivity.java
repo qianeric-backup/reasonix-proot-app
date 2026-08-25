@@ -209,6 +209,7 @@ public class MainActivity extends Activity {
         // 侧滑菜单功能
         findViewById(R.id.menu_adb).setOnClickListener(v -> { drawerLayout.closeDrawer(GravityCompat.START, false); showAdbDialog(); });
         findViewById(R.id.menu_apikey).setOnClickListener(v -> { drawerLayout.closeDrawer(GravityCompat.START, false); showApiKeyConfigDialog(); });
+        findViewById(R.id.menu_ds2api).setOnClickListener(v -> { drawerLayout.closeDrawer(GravityCompat.START, false); showDs2ApiDialog(); });
         findViewById(R.id.menu_update).setOnClickListener(v -> { drawerLayout.closeDrawer(GravityCompat.START, false); showUpdateResonixDialog(); });
         findViewById(R.id.menu_bgmode).setOnClickListener(v -> {
             SharedPreferences sp = getSharedPreferences("prefs", MODE_PRIVATE);
@@ -3269,6 +3270,56 @@ public class MainActivity extends Activity {
         return null;
     }
 
+    /** DS2API 网关面板：应用内嵌 WebView 打开 http://127.0.0.1:5001/admin/ 管理页
+     *  （无需额外安装 DS2API App；若服务未启动则显示提示）。 */
+    private void showDs2ApiDialog() {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        int pad = dp(16);
+        panel.setPadding(pad, dp(8), pad, dp(12));
+        panel.addView(createDarkTip("DS2API 网关：本地 OpenAI/Claude 兼容 API 中转服务。\n"
+                + "若 DS2API 服务已在运行（127.0.0.1:5001），下方将显示其管理页面；\n"
+                + "未运行时请先在系统安装并启动 DS2API App（本应用不内置该服务）。"));
+
+        // 内嵌 WebView 加载 DS2API 管理页
+        WebView ds2Web = new WebView(this);
+        WebSettings ws = ds2Web.getSettings();
+        ws.setJavaScriptEnabled(true);
+        ws.setDomStorageEnabled(true);
+        ws.setAllowFileAccess(false);
+        ws.setCacheMode(WebSettings.LOAD_NO_CACHE);
+        ds2Web.setBackgroundColor(0xFF000000);
+        ds2Web.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
+                // 服务未启动时给出友好提示（不显示 error 页）
+                view.loadDataWithBaseURL(null,
+                        "<html><body style='background:#111;color:#aaa;font-family:sans-serif;padding:20px'>"
+                                + "<h3 style='color:#f77'>DS2API 服务未运行</h3>"
+                                + "<p>请先安装并启动 DS2API App（127.0.0.1:5001）。</p></body></html>",
+                        "text/html", "utf-8", null);
+            }
+        });
+        ds2Web.loadUrl("http://127.0.0.1:5001/admin/");
+        LinearLayout.LayoutParams webLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(420));
+        webLp.topMargin = dp(8);
+        panel.addView(ds2Web, webLp);
+
+        // 打开系统浏览器按钮（备用）
+        Button openBtn = createDarkButton("在系统浏览器打开");
+        openBtn.setOnClickListener(v -> {
+            try {
+                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("http://127.0.0.1:5001/admin/")));
+            } catch (Exception e) {
+                Log.w(TAG, "open ds2api browser failed", e);
+            }
+        });
+        addV(panel, openBtn, 12);
+
+        showPanel("DS2API 网关", panel, null);
+    }
+
     /** 更新 reasonix：从手机选择新版文件，或恢复内置版本 */
     private void showUpdateResonixDialog() {
         EditText urlInput = createDarkEditText("reasonix 更新包链接 (.tgz)", InputType.TYPE_CLASS_TEXT);
@@ -3352,7 +3403,7 @@ public class MainActivity extends Activity {
         });
         addV(panel, restoreBtn, 8);
         // 全屏面板展示（取代系统弹窗，避免遮挡控件）
-        showPanel("更新 Reasonix", panel, null);
+        showPanel("Reasonix 更新", panel, null);
     }
 
     /** 从网络下载 reasonix 更新包（tar.gz），解压提取二进制并覆盖 guest 内版本 */

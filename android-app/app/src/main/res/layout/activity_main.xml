@@ -117,6 +117,18 @@
                         android:textSize="15sp" />
 
                     <TextView
+                        android:id="@+id/menu_ds2api"
+                        android:layout_width="match_parent"
+                        android:layout_height="52dp"
+                        android:background="#141414"
+                        android:layout_marginTop="1dp"
+                        android:gravity="center_vertical"
+                        android:paddingLeft="16dp"
+                        android:text="DS2API 网关"
+                        android:textColor="#FFFFFF"
+                        android:textSize="15sp" />
+
+                    <TextView
                         android:id="@+id/menu_update"
                         android:layout_width="match_parent"
                         android:layout_height="52dp"
@@ -124,7 +136,7 @@
                         android:layout_marginTop="1dp"
                         android:gravity="center_vertical"
                         android:paddingLeft="16dp"
-                        android:text="更新 Reasonix"
+                        android:text="Reasonix 更新"
                         android:textColor="#FFFFFF"
                         android:textSize="15sp" />
 
