@@ -16,3 +16,6 @@ android-app/app/build/
 android-app/.idea/
 *.iml
 /reasonix-proot.apk
+
+# 本地 GitHub token（勿入库）
+tools/.gh_token.tmp
