@@ -289,6 +289,43 @@ SH
 # 关闭 reasonix 遥测确认提示（REASONIX_TELEMETRY=0 / DO_NOT_TRACK 等效）
 export REASONIX_TELEMETRY=0
 
+# --- DS2API 网关（内置上游 AGPL-3.0 服务端，assets/ds2api/ds2api-bundle.tgz）---
+# 端口由 PORT 环境变量控制（上游默认 5001，见 cmd/ds2api/main.go）。
+# 管理台：http://127.0.0.1:5001/admin（App 侧滑栏 DS2API 网关面板内嵌 WebView 打开）。
+# 管理密钥：默认 rsxm-ds2api-admin（DS2API_ADMIN_KEY，config 未保存前生效，
+# 首次在管理台保存配置后会写入 /root/ds2api/config.json 并持久化）。
+# 若用户沿用旧版 DS2API App 的 5001 端口，本内置服务不会启动（检测端口占用），
+# 面板仍可访问旧服务；移除/停止旧 App 后重启本应用即自动接管。
+DS2API_DIR=/usr/local/ds2api
+# 解压到 proot/chroot 后 exec 位可能丢失，显式补回
+chmod +x "$DS2API_DIR/ds2api" 2>/dev/null
+if [ -x "$DS2API_DIR/ds2api" ]; then
+    echo "[ds2api] 检测到内置 DS2API 网关 v4.6.1，准备后台启动 ..."
+    mkdir -p /root/ds2api
+    if nc -z 127.0.0.1 5001 >/dev/null 2>&1; then
+        echo "[ds2api] 127.0.0.1:5001 已被占用（可能为旧版 DS2API App），跳过内置服务启动"
+    else
+        (
+            export HOME=/root
+            export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+            export TERM=xterm-256color
+            export LANG=C.UTF-8
+            export TMPDIR=/tmp
+            export TMP=/tmp
+            export NO_PROXY=127.0.0.1,localhost
+            export no_proxy=127.0.0.1,localhost
+            export PORT=5001
+            export DS2API_ADMIN_KEY=rsxm-ds2api-admin
+            cd /root/ds2api
+            # 幂等：已在运行则跳过（pgrep 匹配主进程）
+            if ! pgrep -f 'ds2api/bin/ds2api|/usr/local/ds2api/ds2api' >/dev/null 2>&1; then
+                /usr/local/ds2api/ds2api >/root/ds2api/ds2api.log 2>&1 &
+                echo "[ds2api] 已后台启动（管理台 http://127.0.0.1:5001/admin，密钥 rsxm-ds2api-admin）"
+            fi
+        ) &
+    fi
+fi
+
 # 每次启动全新进入 TUI（alt screen）：清理 reasonix 非正常退出（force-stop/杀进程/更新重启）
 # 留下的会话恢复标记（*.recovery.json / *.recovery / *.lease.*）。若不清除，reasonix 会恢复
 # 上次会话并渲染历史到普通屏（不进 alt screen），导致终端滑动查看失效。

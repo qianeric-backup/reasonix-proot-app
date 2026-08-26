@@ -3277,9 +3277,10 @@ public class MainActivity extends Activity {
         panel.setOrientation(LinearLayout.VERTICAL);
         int pad = dp(16);
         panel.setPadding(pad, dp(8), pad, dp(12));
-        panel.addView(createDarkTip("DS2API 网关：本地 OpenAI/Claude 兼容 API 中转服务。\n"
-                + "若 DS2API 服务已在运行（127.0.0.1:5001），下方将显示其管理页面；\n"
-                + "未运行时请先在系统安装并启动 DS2API App（本应用不内置该服务）。"));
+        panel.addView(createDarkTip("DS2API 网关：本地 OpenAI/Claude 兼容 API 中转服务（已内置）。\n"
+                + "应用启动时会在 Linux 环境中自动后台运行 DS2API 服务（127.0.0.1:5001），\n"
+                + "下方为管理页面（初始管理密钥 rsxm-ds2api-admin，首次保存配置后持久化到 /root/ds2api/config.json）。\n"
+                + "若检测到旧版 DS2API App 已占用 5001 端口，内置服务不重复启动，面板仍打开旧服务。"));
 
         // 内嵌 WebView 加载 DS2API 管理页
         WebView ds2Web = new WebView(this);
@@ -3962,6 +3963,16 @@ public class MainActivity extends Activity {
         File entry = new File(rootfs, "root/entry.sh");
         extractAsset("root/entry.sh", entry);
         entry.setExecutable(true, false);
+        // DS2API 网关（内置上游 AGPL-3.0 服务端，见 assets/ds2api/README-upstream.md）：
+        // 覆盖刷新整个 ds2api 目录（删除再解压，保证升级后二进制/WebUI 与 APK 一致）
+        File ds2Dir = new File(rootfs, "usr/local/ds2api");
+        deleteRecursive(ds2Dir);
+        File ds2Bundle = new File(files, "ds2api-bundle.tgz");
+        extractAsset("ds2api/ds2api-bundle.tgz", ds2Bundle);
+        File ds2Root = new File(rootfs, "usr/local");
+        ds2Root.mkdirs();
+        runCmd("/system/bin/tar", "-xzf", ds2Bundle.getAbsolutePath(), "-C", ds2Root.getAbsolutePath());
+        ds2Bundle.delete();
         Log.d(TAG, "runtime assets refreshed");
     }
 
@@ -4012,6 +4023,15 @@ public class MainActivity extends Activity {
         File entry = new File(rootfs, "root/entry.sh");
         extractAsset("root/entry.sh", entry);
         entry.setExecutable(true, false);
+
+        // 4.5 DS2API 网关（内置上游 AGPL-3.0 服务端）：解压 ds2api-bundle.tgz 到 /usr/local/ds2api
+        //     （bundle 内含 ds2api 二进制 + static WebUI + LICENSE + README.MD）
+        File ds2Bundle = new File(files, "ds2api-bundle.tgz");
+        extractAsset("ds2api/ds2api-bundle.tgz", ds2Bundle);
+        File ds2Root = new File(rootfs, "usr/local");
+        ds2Root.mkdirs();
+        runCmd("/system/bin/tar", "-xzf", ds2Bundle.getAbsolutePath(), "-C", ds2Root.getAbsolutePath());
+        ds2Bundle.delete();
 
         // 5. DNS 配置
         File resolv = new File(rootfs, "etc/resolv.conf");
