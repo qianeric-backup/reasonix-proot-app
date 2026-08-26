@@ -41,6 +41,8 @@ import android.widget.ProgressBar;
 import android.widget.PopupWindow;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
+
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -3289,11 +3291,6 @@ public class MainActivity extends Activity {
         // 服务控制：启动 / 停止（经 guest .adb-cmd 桥执行，操作后自动刷新管理页）
         // WebView 声明在下方，用 holder 数组跨作用域引用（final 局部变量限制）
         final WebView[] ds2WebBox = new WebView[1];
-        final TextView ds2Status = new TextView(this);
-        ds2Status.setTextSize(13);
-        ds2Status.setPadding(dp(2), dp(4), dp(2), dp(4));
-        ds2Status.setText("（检测中...）");
-        addV(panel, ds2Status, 8);
         LinearLayout ctrlRow = new LinearLayout(this);
         ctrlRow.setOrientation(LinearLayout.HORIZONTAL);
         Button startBtn = createDarkButton("启动 DS2API");
@@ -3306,26 +3303,10 @@ public class MainActivity extends Activity {
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         addV(panel, ctrlRow, 6);
 
-        // 检测服务状态（面板打开时与每次操作后刷新）
-        Runnable refreshDs2Status = () -> new Thread(() -> {
-            // 状态以 127.0.0.1:5001 端口可达为准（与 entry.sh 启动段 nc -z 判断一致）：
-            // 内置服务或旧版 DS2API App 任一占用端口都算"运行中"（管理页即可打开），
-            // 避免旧 App 占用时仅按内置进程 pgrep 误报"已停止"导致状态与真实不符。
-            String st = executeInGuest(
-                    "nc -z 127.0.0.1 5001 >/dev/null 2>&1 && echo RUNNING || echo STOPPED", 6);
-            runOnUiThread(() -> {
-                boolean running = st.contains("RUNNING");
-                ds2Status.setText("服务状态：" + (running ? "运行中" : "已停止"));
-                ds2Status.setTextColor(running ? 0xFF4CAF50 : 0xFFFF6E6E);
-            });
-        }, "ds2-status").start();
-        refreshDs2Status.run();
 
         // 启动：guest 内后台拉起内置服务（与 entry.sh 启动段同参数）
         startBtn.setOnClickListener(v -> {
             startBtn.setEnabled(false);
-            ds2Status.setText("正在启动 DS2API...");
-            ds2Status.setTextColor(0xFFFFD54F);
             new Thread(() -> {
                 String out = executeInGuest(
                         // 先强清残留（含优雅关闭中未退出的进程），确保干净启动
@@ -3338,9 +3319,7 @@ public class MainActivity extends Activity {
                         + "nohup /usr/local/ds2api/ds2api >/root/ds2api/ds2api.log 2>&1 & echo STARTED; fi", 8);
                 runOnUiThread(() -> {
                     boolean ok = out.contains("STARTED") || out.contains("ALREADY_RUNNING");
-                    ds2Status.setText(ok ? "已启动（管理台 http://127.0.0.1:5001/admin）"
-                            : "启动失败：" + out);
-                    ds2Status.setTextColor(ok ? 0xFF4CAF50 : 0xFFFF6E6E);
+                    showToast(ok ? "DS2API 已启动" : "DS2API 启动失败：" + out);
                     startBtn.setEnabled(true);
                     if (ok) ds2WebBox[0].reload();
                 });
@@ -3350,8 +3329,6 @@ public class MainActivity extends Activity {
         // 停止：杀掉内置服务进程（环境重启后 entry.sh 会自动再拉起）
         stopBtn.setOnClickListener(v -> {
             stopBtn.setEnabled(false);
-            ds2Status.setText("正在停止 DS2API...");
-            ds2Status.setTextColor(0xFFFFD54F);
             new Thread(() -> {
                 // SIGTERM 优雅关闭；ds2api 主进程对 SIGTERM 做优雅退出（srv.Shutdown 最多 10s+等活跃连接），
                 // 因此 pkill 发信号后立即返回不代表已退出——先等 1s，仍存活则 SIGKILL 强杀兜底，
@@ -3362,10 +3339,9 @@ public class MainActivity extends Activity {
                         + "if pgrep -x ds2api >/dev/null 2>&1; then echo STILL_RUNNING; else echo STOPPED; fi", 15);
                 runOnUiThread(() -> {
                     boolean stopped = out.contains("STOPPED");
-                    ds2Status.setText(stopped ? "已停止"
-                            : (out.contains("STILL_RUNNING") ? "停止失败：进程仍在运行（SIGKILL 后仍存活）"
-                            : "停止失败：" + out));
-                    ds2Status.setTextColor(0xFFFF6E6E);
+                    showToast(stopped ? "DS2API 已停止"
+                        : (out.contains("STILL_RUNNING") ? "DS2API 停止失败：进程仍在运行"
+                        : "DS2API 停止失败：" + out));
                     stopBtn.setEnabled(true);
                     if (stopped) ds2WebBox[0].reload();
                 });
@@ -3416,6 +3392,14 @@ public class MainActivity extends Activity {
         addV(panel, openBtn, 12);
 
         showPanel("DS2API 网关", panel, null);
+    }
+
+    /** 轻提示：操作结果的短时 Toast 反馈（不占用面板常驻状态行） */
+    private void showToast(String msg) {
+        runOnUiThread(() -> {
+            try { Toast.makeText(this, msg, Toast.LENGTH_SHORT).show(); }
+            catch (Exception ignored) {}
+        });
     }
 
     /** 发送按键序列到 reasonix 终端（原样写入 stdin，不追加换行）：
