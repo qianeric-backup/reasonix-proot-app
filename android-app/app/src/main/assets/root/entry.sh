@@ -317,8 +317,8 @@ if [ -x "$DS2API_DIR/ds2api" ]; then
             export PORT=5001
             export DS2API_ADMIN_KEY=rsxm-ds2api-admin
             cd /root/ds2api
-            # 幂等：已在运行则跳过（pgrep 匹配主进程）
-            if ! pgrep -f 'ds2api/bin/ds2api|/usr/local/ds2api/ds2api' >/dev/null 2>&1; then
+            # 幂等：已在运行则跳过（pgrep -x 精确进程名，避免 -f 全匹配自匹配）
+            if ! pgrep -x ds2api >/dev/null 2>&1; then
                 /usr/local/ds2api/ds2api >/root/ds2api/ds2api.log 2>&1 &
                 echo "[ds2api] 已后台启动（管理台 http://127.0.0.1:5001/admin，密钥 rsxm-ds2api-admin）"
             fi

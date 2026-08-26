@@ -3283,8 +3283,85 @@ public class MainActivity extends Activity {
                 + "下方为管理页面（初始管理密钥 rsxm-ds2api-admin，首次保存配置后持久化到 /root/ds2api/config.json）。\n"
                 + "若检测到旧版 DS2API App 已占用 5001 端口，内置服务不重复启动，面板仍打开旧服务。"));
 
+        // 服务控制：启动 / 停止（经 guest .adb-cmd 桥执行，操作后自动刷新管理页）
+        // WebView 声明在下方，用 holder 数组跨作用域引用（final 局部变量限制）
+        final WebView[] ds2WebBox = new WebView[1];
+        final TextView ds2Status = new TextView(this);
+        ds2Status.setTextSize(13);
+        ds2Status.setPadding(dp(2), dp(4), dp(2), dp(4));
+        ds2Status.setText("（检测中...）");
+        addV(panel, ds2Status, 8);
+        LinearLayout ctrlRow = new LinearLayout(this);
+        ctrlRow.setOrientation(LinearLayout.HORIZONTAL);
+        Button startBtn = createDarkButton("启动 DS2API");
+        Button stopBtn = createDarkButton("停止 DS2API");
+        LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        btnLp.rightMargin = dp(8);
+        ctrlRow.addView(startBtn, btnLp);
+        ctrlRow.addView(stopBtn, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        addV(panel, ctrlRow, 6);
+
+        // 检测服务状态（面板打开时与每次操作后刷新）
+        Runnable refreshDs2Status = () -> new Thread(() -> {
+            String st = executeInGuest(
+                    "pgrep -x ds2api >/dev/null 2>&1 && echo RUNNING || echo STOPPED", 6);
+            runOnUiThread(() -> {
+                boolean running = st.contains("RUNNING");
+                ds2Status.setText("服务状态：" + (running ? "运行中" : "已停止"));
+                ds2Status.setTextColor(running ? 0xFF4CAF50 : 0xFFFF6E6E);
+            });
+        }, "ds2-status").start();
+        refreshDs2Status.run();
+
+        // 启动：guest 内后台拉起内置服务（与 entry.sh 启动段同参数）
+        startBtn.setOnClickListener(v -> {
+            startBtn.setEnabled(false);
+            ds2Status.setText("正在启动 DS2API...");
+            ds2Status.setTextColor(0xFFFFD54F);
+            new Thread(() -> {
+                String out = executeInGuest(
+                        "mkdir -p /root/ds2api && "
+                        + "if pgrep -x ds2api >/dev/null 2>&1; then echo ALREADY_RUNNING; else "
+                        + "cd /root/ds2api && export HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "
+                        + "TERM=xterm-256color LANG=C.UTF-8 TMPDIR=/tmp TMP=/tmp "
+                        + "NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost "
+                        + "PORT=5001 DS2API_ADMIN_KEY=rsxm-ds2api-admin && "
+                        + "nohup /usr/local/ds2api/ds2api >/root/ds2api/ds2api.log 2>&1 & echo STARTED; fi", 8);
+                runOnUiThread(() -> {
+                    boolean ok = out.contains("STARTED") || out.contains("ALREADY_RUNNING");
+                    ds2Status.setText(ok ? "已启动（管理台 http://127.0.0.1:5001/admin）"
+                            : "启动失败：" + out);
+                    ds2Status.setTextColor(ok ? 0xFF4CAF50 : 0xFFFF6E6E);
+                    startBtn.setEnabled(true);
+                    if (ok) ds2WebBox[0].reload();
+                });
+            }, "ds2-start").start();
+        });
+
+        // 停止：杀掉内置服务进程（环境重启后 entry.sh 会自动再拉起）
+        stopBtn.setOnClickListener(v -> {
+            stopBtn.setEnabled(false);
+            ds2Status.setText("正在停止 DS2API...");
+            ds2Status.setTextColor(0xFFFFD54F);
+            new Thread(() -> {
+                String out = executeInGuest(
+                        "pkill -x ds2api 2>/dev/null && echo STOPPED || echo NOT_RUNNING", 6);
+                runOnUiThread(() -> {
+                    boolean stopped = out.contains("STOPPED");
+                    ds2Status.setText(stopped ? "已停止"
+                            : (out.contains("NOT_RUNNING") ? "服务未在运行" : "停止失败：" + out));
+                    ds2Status.setTextColor(0xFFFF6E6E);
+                    stopBtn.setEnabled(true);
+                    if (stopped) ds2WebBox[0].reload();
+                });
+            }, "ds2-stop").start();
+        });
+
         // 内嵌 WebView 加载 DS2API 管理页
         WebView ds2Web = new WebView(this);
+        ds2WebBox[0] = ds2Web;   // 供上方按钮线程跨作用域引用（reload）
         WebSettings ws = ds2Web.getSettings();
         ws.setJavaScriptEnabled(true);
         ws.setDomStorageEnabled(true);
