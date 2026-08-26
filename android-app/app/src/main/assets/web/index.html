@@ -99,8 +99,8 @@
   setTimeout(function () { try { term.refresh(0, term.rows - 1); } catch (e) {} }, 300);
   setTimeout(function () { try { term.refresh(0, term.rows - 1); } catch (e) {} }, 800);
   setTimeout(function () { try { term.refresh(0, term.rows - 1); } catch (e) {} }, 2000);
-  // 延迟聚焦输入框（启动即就绪，无需点击）：聚焦触发 reasonix 按键盘调整后的
-  // 尺寸（rows 40->26）重新渲染完整 CLI 界面，且软键盘自动弹出可直接输入。
+  // 延迟聚焦输入框（启动即就绪，无需点击）：聚焦触发 reasonix 按键盘调整后
+  // 的尺寸（rows 40->26）重新渲染完整 CLI 界面，且软键盘自动弹出可直接输入。
   setTimeout(function () { try { term.focus(); } catch (e) {} }, 1200);
   // 启动后强制重排渲染：WebView 合成层可能未绘制完整终端（点击才显示），
   // 微调容器尺寸触发 reflow + 重新 fit，让 reasonix 输出完整显示。
@@ -119,11 +119,11 @@
 
   // ---- 触摸滚动：浏览对话历史 ----
   // reasonix 的对话历史由 ↑/↓ 驱动（官方滚轮在 DECSET 1007 下映射为 ↑/↓）。
-  // 因此触摸滑动改为发送 ↑/↓ 序列（ESC[A / ESC[B）——手指上滑=↑（看更早历史），
+  // 因此触摸滑动发送 ↑/↓ 序列（ESC[A / ESC[B）——手指上滑=↑（看更早历史），
   // 下滑=↓（回看新内容），与滚轮语义完全一致，reasonix 无论 TUI（alt screen）
   // 还是恢复会话（普通屏）都原生响应，不再依赖翻页键。
   //
-  // 滑动调速：SCROLL_STEP 表示"每滚动一行历史所需的滑动像素数"（由 Java 侧滑
+  // 滑动调速：SCROLL_STEP 表示"每翻动一行历史所需的滑动像素数"（由 Java 侧滑
   // 菜单 SeekBar 注入，档位 1(慢)~10(快)，默认 5 → 约 100px/行）。值越大滑动
   // 越慢（每行所需像素越多）；值越小越快。
   var SCROLL_STEP = 100;
@@ -133,20 +133,25 @@
   function sendArrowKey(dy) {
     if (!(window.Android && window.Android.write)) return;
     var acc = 0;
-    // 累积滑动距离：满 SCROLL_STEP 才发一次方向键（默认 100px/行，避免快速
-    // 滑动连续爆出大量按键导致历史翻滚过快）
-    if (dy > 0) acc = dy; else acc = -dy;
-    var lines = 0;
-    while (acc >= SCROLL_STEP) {
-      lines++;
-      acc -= SCROLL_STEP;
+    // 手指上滑（dy<0，clientY 减小）= 看更早历史 → ↑；下滑（dy>0）= 回看新内容 → ↓
+    if (dy < 0) acc = -dy; else acc = dy;
+    // 整页换算：滑动 SCROLL_STEP × 当前 rows 像素 = 翻一页（默认 100px/行 × 26 行 ≈
+    // 2600px/页）。手指滑满一页就发一组方向键（rows 次 ↑ 或 ↓），reasonix TUI 一次
+    // 翻一屏历史——避免逐行 100px/行导致翻一整屏要滑 2600px（手滑不到，"滑不动"）。
+    // 正常小幅滑动（100~300px）产生 1~3 行即时反馈，不会"滑了没反应"。
+    var pageStep = SCROLL_STEP * term.rows;
+    var pages = 0;
+    while (acc >= pageStep) {
+      pages++;
+      acc -= pageStep;
     }
-    if (lines > 0) {
-      // 手指上滑（dy<0，clientY 减小）= 看更早历史 → ↑；手指下滑（dy>0）= 回看新内容 → ↓
+    if (pages > 0) {
       var key = dy < 0 ? '\u001b[A' : '\u001b[B';
-      var i;
-      for (i = 0; i < lines; i++) {
-        try { Android.write(key); } catch (err) {}
+      var i, j;
+      for (i = 0; i < pages; i++) {
+        for (j = 0; j < term.rows; j++) {
+          try { Android.write(key); } catch (err) {}
+        }
       }
     }
   }
