@@ -11,8 +11,8 @@ android {
         minSdk 26
         targetSdk 34
         // 版本随 GitHub Release 同步更新（当前 v1.16）
-        versionCode 16
-        versionName "1.16"
+        versionCode 17
+        versionName "1.17"
     }
 
     buildTypes {

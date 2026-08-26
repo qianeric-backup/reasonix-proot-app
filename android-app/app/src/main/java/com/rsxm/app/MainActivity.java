@@ -11,6 +11,8 @@ import android.provider.OpenableColumns;
 import android.content.SharedPreferences;
 import android.net.Uri;
 import android.os.Build;
+import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
 import android.view.WindowManager;
 import android.widget.Spinner;
 import android.widget.ArrayAdapter;
@@ -36,6 +38,7 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
+import android.widget.PopupWindow;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
@@ -3431,70 +3434,81 @@ public class MainActivity extends Activity {
         }
     }
 
-    /** 快捷键面板：列出 reasonix 常用按键，点击条目即发送对应按键序列到终端
-     *  （对照官方文档 docs/CLI-REFERENCE.md 的 Keybindings 章节）。 */
+    /** 快捷键 3×3 弹窗：侧滑菜单「快捷键」按下后在屏幕中央弹出方形九键格
+     *  （↑ PgUp ↓ / PgDn Esc Tab / Ctrl+C Enter Shift+Tab），点击即发送按键序列
+     *  到 reasonix（复用 write 通道，不追加换行），长按连发（150ms 一次），点击震动反馈；
+     *  点弹窗外任意区域或按返回键关闭。 */
     private void showKeysDialog() {
-        LinearLayout panel = new LinearLayout(this);
-        panel.setOrientation(LinearLayout.VERTICAL);
-        int pad = dp(16);
-        panel.setPadding(pad, dp(8), pad, dp(12));
-
-        // 分组：编辑 / 导航与历史 / 会话控制 / 编辑门（code mode）
-        final String[][] editKeys = {
-                {"Enter", "提交提示词", "\r"},
-                {"Ctrl+A", "跳到行首", "\u0001"},
-                {"Ctrl+E", "跳到行尾", "\u0005"},
-                {"Ctrl+W", "删除光标前一个词", "\u0017"},
-                {"Ctrl+U", "清空整个输入缓冲", "\u0015"},
-        };
-        final String[][] navKeys = {
-                {"↑", "上翻对话历史（与滑动一致）", "\u001b[A"},
-                {"↓", "下翻对话历史（与滑动一致）", "\u001b[B"},
+        final String[][] keys = {
+                {"↑", "上翻历史", "\u001b[A"},
                 {"PgUp", "整页上翻", "\u001b[5~"},
+                {"↓", "下翻历史", "\u001b[B"},
                 {"PgDn", "整页下翻", "\u001b[6~"},
-                {"End", "跳到最新一行", "\u001b[F"},
+                {"Esc", "中止/关闭", "\u001b"},
+                {"Tab", "补全", "\t"},
+                {"Ctrl+C", "中止回合", "\u0003"},
+                {"Enter", "提交", "\r"},
+                {"Shift+Tab", "编辑门", "\u001b[Z"}
         };
-        final String[][] sessionKeys = {
-                {"Tab", "完成 @ 提及 / 补全斜杠命令", "\t"},
-                {"Shift+Tab", "编辑门：切换 review ↔ AUTO", "\u001b[Z"},
-                {"Esc", "关闭选择器 · 中止当前模型回合", "\u001b"},
-                {"Ctrl+C", "中止当前模型回合", "\u0003"},
-        };
-        final String[][] gateKeys = {
-                {"y", "接受待处理编辑（review 弹窗）", "y"},
-                {"n", "丢弃待处理编辑（review 弹窗）", "n"},
-                {"Shift+Tab", "切换 review ↔ AUTO（跨会话记忆）", "\u001b[Z"},
-                {"u", "撤销最后一次自动应用批次（5s 横幅内）", "u"},
-        };
+        int cell = dp(60);
+        int gap = dp(4);
+        int pad = dp(10);
 
-        // 通用键盘行：按键 + 说明，点击发送
-        Runnable addGroup = null;
-        java.util.function.BiConsumer<String, String[][]> addGroupFn = (title, keys) -> {
-            panel.addView(createDarkSectionTitle(title));
-            for (String[] k : keys) {
-                LinearLayout row = new LinearLayout(this);
-                row.setOrientation(LinearLayout.HORIZONTAL);
-                row.setGravity(android.view.Gravity.CENTER_VERTICAL);
-                row.setPadding(dp(2), dp(5), dp(2), dp(5));
-                TextView keyTv = new TextView(this);
-                keyTv.setText(k[0]);
-                keyTv.setTextColor(0xFF58A6FF);
-                keyTv.setTextSize(14);
-                keyTv.setTypeface(android.graphics.Typeface.MONOSPACE);
-                keyTv.setBackgroundColor(0xFF1E1E1E);
-                keyTv.setPadding(dp(8), dp(3), dp(8), dp(3));
-                LinearLayout.LayoutParams keyLp = new LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-                keyLp.rightMargin = dp(10);
-                row.addView(keyTv, keyLp);
-                TextView descTv = new TextView(this);
-                descTv.setText(k[1]);
-                descTv.setTextColor(0xFFCCCCCC);
-                descTv.setTextSize(13);
-                descTv.setLayoutParams(new LinearLayout.LayoutParams(
-                        0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-                row.addView(descTv);
-                row.setOnClickListener(v -> {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(pad, dp(8), pad, dp(12));
+        android.graphics.drawable.GradientDrawable boxBg = new android.graphics.drawable.GradientDrawable();
+        boxBg.setColor(0xF2121212);
+        boxBg.setCornerRadius(dp(10));
+        boxBg.setStroke(dp(1), 0xFF2A2A2A);
+        box.setBackground(boxBg);
+
+        // 标题
+        TextView title = new TextView(this);
+        title.setText("快捷键");
+        title.setTextColor(0xFF58A6FF);
+        title.setTextSize(14);
+        title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        title.setGravity(android.view.Gravity.CENTER);
+        box.addView(title, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        TextView tip = new TextView(this);
+        tip.setText("点击发送 · 长按连发");
+        tip.setTextColor(0xFF8A8A8A);
+        tip.setTextSize(11);
+        tip.setGravity(android.view.Gravity.CENTER);
+        box.addView(tip, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        // 3×3 方形按钮
+        for (int row = 0; row < 3; row++) {
+            LinearLayout rowL = new LinearLayout(this);
+            rowL.setOrientation(LinearLayout.HORIZONTAL);
+            for (int c = 0; c < 3; c++) {
+                final String[] k = keys[row * 3 + c];
+                Button btn = new Button(this);
+                btn.setText(k[0]);
+                btn.setTextColor(0xFFE6EDF3);
+                btn.setTextSize(12);
+                btn.setAllCaps(false);
+                btn.setTypeface(android.graphics.Typeface.MONOSPACE);
+                btn.setGravity(android.view.Gravity.CENTER);
+                // 方形圆角背景 + 按下高亮
+                android.graphics.drawable.StateListDrawable sld = new android.graphics.drawable.StateListDrawable();
+                android.graphics.drawable.GradientDrawable pressed = new android.graphics.drawable.GradientDrawable();
+                pressed.setColor(0xFF2D4A75);
+                pressed.setCornerRadius(dp(6));
+                android.graphics.drawable.GradientDrawable normal = new android.graphics.drawable.GradientDrawable();
+                normal.setColor(0xFF1E1E1E);
+                normal.setCornerRadius(dp(6));
+                normal.setStroke(dp(1), 0xFF444444);
+                sld.addState(new int[]{android.R.attr.state_pressed}, pressed);
+                sld.addState(new int[]{}, normal);
+                btn.setBackground(sld);
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(cell, cell);
+                if (c > 0) lp.leftMargin = gap;
+                rowL.addView(btn, lp);
+                btn.setOnClickListener(v -> {
                     sendKeySeq(k[2]);
                     // 震动反馈：瞬时短震（硬件支持时），让点击可感知
                     try {
@@ -3503,38 +3517,39 @@ public class MainActivity extends Activity {
                     } catch (Exception ignored) {}
                 });
                 // 长按连发：按住持续发送（翻页/上下翻连续滚动用）
-                row.setOnLongClickListener(v -> {
+                btn.setOnLongClickListener(v -> {
                     final Runnable[] r = new Runnable[1];
                     r[0] = new Runnable() {
                         @Override
                         public void run() {
                             sendKeySeq(k[2]);
-                            ui.postDelayed(r[0], 180);
+                            ui.postDelayed(r[0], 150);
                         }
                     };
                     r[0].run();
-                    row.setOnTouchListener((view, ev) -> {
+                    btn.setOnTouchListener((view, ev) -> {
                         if (ev.getAction() == android.view.MotionEvent.ACTION_UP
                                 || ev.getAction() == android.view.MotionEvent.ACTION_CANCEL) {
                             ui.removeCallbacks(r[0]);
-                            row.setOnTouchListener(null);
+                            btn.setOnTouchListener(null);
                         }
                         return false;
                     });
                     return true;
                 });
-                panel.addView(row);
             }
-        };
-        addGroupFn.accept("编辑", editKeys);
-        addGroupFn.accept("导航与历史", navKeys);
-        addGroupFn.accept("会话控制", sessionKeys);
-        addGroupFn.accept("编辑门（code mode）", gateKeys);
-        addV(panel, createDarkTip("点击任意按键即发送到 reasonix 终端（面板保持打开，可连续点按；长按可连发，翻页/上下翻建议长按）。"
-                + "发送的是按键序列而非文本命令，reasonix 会话与 shell 均可响应。"
-                + "终端内手动滑动也已改为 ↑/↓ 滚动对话历史（与滚轮语义一致）。"), 10);
+            box.addView(rowL);
+        }
 
-        showPanel("快捷键", panel, null);
+        // 弹出：屏幕居中，点击外部/返回键关闭
+        PopupWindow pop = new PopupWindow(box,
+                cell * 3 + gap * 2 + pad * 2,
+                ViewGroup.LayoutParams.WRAP_CONTENT, true);
+        pop.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        pop.setOutsideTouchable(true);
+        pop.setFocusable(true);
+        try { pop.setElevation(dp(8)); } catch (Exception ignored) {}
+        pop.showAtLocation(findViewById(R.id.drawer_layout), android.view.Gravity.CENTER, 0, 0);
     }
 
     /** 更新 reasonix：从手机选择新版文件，或恢复内置版本 */
