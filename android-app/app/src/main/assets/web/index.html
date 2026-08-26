@@ -157,6 +157,7 @@
     // 余量折算：不足一页的像素按单行像素换算成行数发送（单行 = SCROLL_STEP px），
     // 保证 100~300px 小幅滑动即时翻 1~3 行，修复"滑了没反应"。
     var rowLines = Math.floor(acc / SCROLL_STEP);
+    if (rowLines > term.rows) rowLines = term.rows;   // 封顶：单次滑动最多翻一屏
     if (rowLines > 0) {
       var k2 = dy < 0 ? '[A' : '[B';
       for (i = 0; i < rowLines; i++) {
@@ -188,7 +189,7 @@
       // 也可能是 reasonix 恢复会话界面（渲染历史到普通屏）——
       // 两者都做：滚 xterm scrollback + 发翻页键（shell 会忽略翻页键，无害）。
       // scrollLines 的行数按 SCROLL_STEP 缩放，保持与 TUI 翻页速度一致。
-      var lines = Math.max(1, Math.round(Math.abs(dy) * 8 / SCROLL_STEP));
+      var lines = Math.max(1, Math.round(Math.abs(dy) / SCROLL_STEP));
       if (dy < 0) {
         term.scrollLines(-lines);   // 手指上滑：向上滚 scrollback 看更早输出
       } else {
@@ -199,7 +200,9 @@
       var pgKey = dy < 0 ? '[5~' : '[6~';
       // 翻页键也按滑动像素折算行数发送（单行 = SCROLL_STEP px），
       // 保证普通屏（恢复会话）小幅滑动也有即时反馈。
-      var pgLines = Math.max(1, Math.round(Math.abs(dy) / SCROLL_STEP));
+      var pgLines = Math.round(Math.abs(dy) / SCROLL_STEP);
+      if (pgLines > term.rows) pgLines = term.rows;   // 封顶：单次滑动最多翻一屏
+      if (pgLines < 1) pgLines = 1;
       if (window.Android && window.Android.write) {
         for (var pi = 0; pi < pgLines; pi++) {
           try { Android.write(pgKey); } catch (err) {}
