@@ -3432,8 +3432,8 @@ public class MainActivity extends Activity {
                 {"Ctrl+U", "清空整个输入缓冲", "\u0015"},
         };
         final String[][] navKeys = {
-                {"↑", "上翻对话历史", "\u001b[A"},
-                {"↓", "下翻对话历史", "\u001b[B"},
+                {"↑", "上翻对话历史（与滑动一致）", "\u001b[A"},
+                {"↓", "下翻对话历史（与滑动一致）", "\u001b[B"},
                 {"PgUp", "整页上翻", "\u001b[5~"},
                 {"PgDn", "整页下翻", "\u001b[6~"},
                 {"End", "跳到最新一行", "\u001b[F"},
@@ -3478,7 +3478,35 @@ public class MainActivity extends Activity {
                 descTv.setLayoutParams(new LinearLayout.LayoutParams(
                         0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
                 row.addView(descTv);
-                row.setOnClickListener(v -> sendKeySeq(k[2]));
+                row.setOnClickListener(v -> {
+                    sendKeySeq(k[2]);
+                    // 震动反馈：瞬时短震（硬件支持时），让点击可感知
+                    try {
+                        android.os.Vibrator vb = (android.os.Vibrator) getSystemService(VIBRATOR_SERVICE);
+                        if (vb != null && vb.hasVibrator()) vb.vibrate(25);
+                    } catch (Exception ignored) {}
+                });
+                // 长按连发：按住持续发送（翻页/上下翻连续滚动用）
+                row.setOnLongClickListener(v -> {
+                    final Runnable[] r = new Runnable[1];
+                    r[0] = new Runnable() {
+                        @Override
+                        public void run() {
+                            sendKeySeq(k[2]);
+                            ui.postDelayed(r[0], 180);
+                        }
+                    };
+                    r[0].run();
+                    row.setOnTouchListener((view, ev) -> {
+                        if (ev.getAction() == android.view.MotionEvent.ACTION_UP
+                                || ev.getAction() == android.view.MotionEvent.ACTION_CANCEL) {
+                            ui.removeCallbacks(r[0]);
+                            row.setOnTouchListener(null);
+                        }
+                        return false;
+                    });
+                    return true;
+                });
                 panel.addView(row);
             }
         };
@@ -3486,8 +3514,9 @@ public class MainActivity extends Activity {
         addGroupFn.accept("导航与历史", navKeys);
         addGroupFn.accept("会话控制", sessionKeys);
         addGroupFn.accept("编辑门（code mode）", gateKeys);
-        addV(panel, createDarkTip("点击任意按键即发送到 reasonix 终端（面板保持打开，可连续点按，如连续翻页）。"
-                + "发送的是按键序列而非文本命令，reasonix 会话与 shell 均可响应。"), 10);
+        addV(panel, createDarkTip("点击任意按键即发送到 reasonix 终端（面板保持打开，可连续点按；长按可连发，翻页/上下翻建议长按）。"
+                + "发送的是按键序列而非文本命令，reasonix 会话与 shell 均可响应。"
+                + "终端内手动滑动也已改为 ↑/↓ 滚动对话历史（与滚轮语义一致）。"), 10);
 
         showPanel("快捷键", panel, null);
     }

@@ -117,34 +117,35 @@
     }
   }, 700);
 
-  // ---- 触摸滚动：浏览历史输出 ----
-  // 发送翻页键（PageUp=ESC[5~ 查看历史 / PageDown=ESC[6~ 新内容）。
-  // reasonix 的 transcript 滚动依赖翻页键（帮助文本明示），无论其在
-  // alt screen（TUI）还是普通 screen（恢复会话时 reasonix 不进 alt screen，
-  // 直接渲染历史到普通屏，此时仍响应翻页键滚动历史）。
+  // ---- 触摸滚动：浏览对话历史 ----
+  // reasonix 的对话历史由 ↑/↓ 驱动（官方滚轮在 DECSET 1007 下映射为 ↑/↓）。
+  // 因此触摸滑动改为发送 ↑/↓ 序列（ESC[A / ESC[B）——手指上滑=↑（看更早历史），
+  // 下滑=↓（回看新内容），与滚轮语义完全一致，reasonix 无论 TUI（alt screen）
+  // 还是恢复会话（普通屏）都原生响应，不再依赖翻页键。
   //
-  // 滑动调速：SCROLL_STEP 表示"每翻一页需要的滑动像素数"（由 Java 侧滑菜单
-  // SeekBar 注入，档位 1(慢)~10(快)，默认 5 → 约 100px/页，即原固定 8px/页
-  // 的约 1/12 速度）。值越大滑动越慢（每页所需像素越多）；值越小越快。
+  // 滑动调速：SCROLL_STEP 表示"每滚动一行历史所需的滑动像素数"（由 Java 侧滑
+  // 菜单 SeekBar 注入，档位 1(慢)~10(快)，默认 5 → 约 100px/行）。值越大滑动
+  // 越慢（每行所需像素越多）；值越小越快。
   var SCROLL_STEP = 100;
   function setScrollStep(v) {
     if (typeof v === 'number' && v >= 1) SCROLL_STEP = v;
   }
-  function sendPageKey(dy) {
+  function sendArrowKey(dy) {
     if (!(window.Android && window.Android.write)) return;
     var acc = 0;
-    // 累积滑动距离：满 SCROLL_STEP 才发一页（默认 100px/页，避免快速滑动
-    // 连续爆出大量翻页键导致 TUI 翻滚过快的核心修复）
+    // 累积滑动距离：满 SCROLL_STEP 才发一次方向键（默认 100px/行，避免快速
+    // 滑动连续爆出大量按键导致历史翻滚过快）
     if (dy > 0) acc = dy; else acc = -dy;
-    var pages = 0;
+    var lines = 0;
     while (acc >= SCROLL_STEP) {
-      pages++;
+      lines++;
       acc -= SCROLL_STEP;
     }
-    if (pages > 0) {
-      var key = dy > 0 ? '\u001b[5~' : '\u001b[6~';
+    if (lines > 0) {
+      // 手指上滑（dy>0）= 看更早历史 → ↑；下滑 = 回看新内容 → ↓
+      var key = dy > 0 ? '\u001b[A' : '\u001b[B';
       var i;
-      for (i = 0; i < pages; i++) {
+      for (i = 0; i < lines; i++) {
         try { Android.write(key); } catch (err) {}
       }
     }
@@ -165,8 +166,8 @@
     touchMoved = true;
     var inAlt = term.buffer.active.type === 'alternate';
     if (inAlt) {
-      // reasonix TUI（alt screen）：翻页键滚动 transcript
-      sendPageKey(dy);
+      // reasonix TUI（alt screen）：↑/↓ 滚动对话历史
+      sendArrowKey(dy);
     } else {
       // 普通 screen：可能是 shell（滚动 xterm scrollback 浏览历史输出），
       // 也可能是 reasonix 恢复会话界面（渲染历史到普通屏）——
@@ -178,7 +179,7 @@
       } else {
         term.scrollLines(lines);
       }
-      sendPageKey(dy);
+      sendArrowKey(dy);
     }
     if (!wheelSent) {
       wheelSent = true;
