@@ -146,12 +146,21 @@
       acc -= pageStep;
     }
     if (pages > 0) {
-      var key = dy < 0 ? '\u001b[A' : '\u001b[B';
+      var key = dy < 0 ? '[A' : '[B';
       var i, j;
       for (i = 0; i < pages; i++) {
         for (j = 0; j < term.rows; j++) {
           try { Android.write(key); } catch (err) {}
         }
+      }
+    }
+    // 余量折算：不足一页的像素按单行像素换算成行数发送（单行 = SCROLL_STEP px），
+    // 保证 100~300px 小幅滑动即时翻 1~3 行，修复"滑了没反应"。
+    var rowLines = Math.floor(acc / SCROLL_STEP);
+    if (rowLines > 0) {
+      var k2 = dy < 0 ? '[A' : '[B';
+      for (i = 0; i < rowLines; i++) {
+        try { Android.write(k2); } catch (err) {}
       }
     }
   }
@@ -188,8 +197,13 @@
       // 普通屏：发 PgUp/PgDn 翻页键（shell 会忽略翻页键，无害），
       // 不发 ↑/↓——↑/↓ 会触发 shell 命令历史导航，干扰输入。
       var pgKey = dy < 0 ? '[5~' : '[6~';
+      // 翻页键也按滑动像素折算行数发送（单行 = SCROLL_STEP px），
+      // 保证普通屏（恢复会话）小幅滑动也有即时反馈。
+      var pgLines = Math.max(1, Math.round(Math.abs(dy) / SCROLL_STEP));
       if (window.Android && window.Android.write) {
-        try { Android.write(pgKey); } catch (err) {}
+        for (var pi = 0; pi < pgLines; pi++) {
+          try { Android.write(pgKey); } catch (err) {}
+        }
       }
     }
     if (!wheelSent) {
