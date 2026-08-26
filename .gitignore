@@ -19,3 +19,6 @@ android-app/.idea/
 
 # 本地 GitHub token（勿入库）
 tools/.gh_token.tmp
+
+# 本地临时脚本（补丁用，勿入库）
+tmp/
