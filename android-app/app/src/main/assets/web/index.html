@@ -162,6 +162,7 @@
   termEl.addEventListener('touchstart', function (e) {
     touchStartY = e.touches[0].clientY;
     touchMoved = false;
+    wheelSent = false;   // 每次触摸重置，确保滚动模式通知每次都上报
   }, { passive: true });
   termEl.addEventListener('touchmove', function (e) {
     if (touchStartY === null) return;
@@ -184,7 +185,12 @@
       } else {
         term.scrollLines(lines);    // 手指下滑：向下滚
       }
-      sendArrowKey(dy);
+      // 普通屏：发 PgUp/PgDn 翻页键（shell 会忽略翻页键，无害），
+      // 不发 ↑/↓——↑/↓ 会触发 shell 命令历史导航，干扰输入。
+      var pgKey = dy < 0 ? '[5~' : '[6~';
+      if (window.Android && window.Android.write) {
+        try { Android.write(pgKey); } catch (err) {}
+      }
     }
     if (!wheelSent) {
       wheelSent = true;
