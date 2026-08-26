@@ -3327,7 +3327,7 @@ public class MainActivity extends Activity {
                         + "cd /root/ds2api && export HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "
                         + "TERM=xterm-256color LANG=C.UTF-8 TMPDIR=/tmp TMP=/tmp "
                         + "NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost "
-                        + "PORT=5001 DS2API_ADMIN_KEY=rsxm-ds2api-admin && "
+                        + "PORT=5001 DS2API_ADMIN_KEY=rsxm-ds2api-admin DS2API_STATIC_ADMIN_DIR=/usr/local/ds2api/static/admin DS2API_CONFIG_PATH=/root/ds2api/config.json && "
                         + "nohup /usr/local/ds2api/ds2api >/root/ds2api/ds2api.log 2>&1 & echo STARTED; fi", 8);
                 runOnUiThread(() -> {
                     boolean ok = out.contains("STARTED") || out.contains("ALREADY_RUNNING");

@@ -316,6 +316,9 @@ if [ -x "$DS2API_DIR/ds2api" ]; then
             export no_proxy=127.0.0.1,localhost
             export PORT=5001
             export DS2API_ADMIN_KEY=rsxm-ds2api-admin
+            # 静态 WebUI 与 config 必须显式指定（默认取 cwd 下 static/admin，而 bundle 在 /usr/local/ds2api）
+            export DS2API_STATIC_ADMIN_DIR=/usr/local/ds2api/static/admin
+            export DS2API_CONFIG_PATH=/root/ds2api/config.json
             cd /root/ds2api
             # 幂等：已在运行则跳过（pgrep -x 精确进程名，避免 -f 全匹配自匹配）
             if ! pgrep -x ds2api >/dev/null 2>&1; then
