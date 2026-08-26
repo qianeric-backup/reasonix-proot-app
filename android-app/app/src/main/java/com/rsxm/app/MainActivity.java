@@ -3322,7 +3322,8 @@ public class MainActivity extends Activity {
             ds2Status.setTextColor(0xFFFFD54F);
             new Thread(() -> {
                 String out = executeInGuest(
-                        "mkdir -p /root/ds2api && "
+                        // 先强清残留（含优雅关闭中未退出的进程），确保干净启动
+                        "mkdir -p /root/ds2api && pkill -9 -x ds2api 2>/dev/null; sleep 0.5; "
                         + "if pgrep -x ds2api >/dev/null 2>&1; then echo ALREADY_RUNNING; else "
                         + "cd /root/ds2api && export HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "
                         + "TERM=xterm-256color LANG=C.UTF-8 TMPDIR=/tmp TMP=/tmp "
@@ -3346,12 +3347,18 @@ public class MainActivity extends Activity {
             ds2Status.setText("正在停止 DS2API...");
             ds2Status.setTextColor(0xFFFFD54F);
             new Thread(() -> {
+                // SIGTERM 优雅关闭；ds2api 主进程对 SIGTERM 做优雅退出（srv.Shutdown 最多 10s+等活跃连接），
+                // 因此 pkill 发信号后立即返回不代表已退出——先等 1s，仍存活则 SIGKILL 强杀兜底，
+                // 最后用 pgrep 确认真正退出才算 STOPPED（否则面板显示"已停止"但进程还在优雅关闭中）。
                 String out = executeInGuest(
-                        "pkill -x ds2api 2>/dev/null && echo STOPPED || echo NOT_RUNNING", 6);
+                        "pkill -x ds2api 2>/dev/null; sleep 1; "
+                        + "if pgrep -x ds2api >/dev/null 2>&1; then pkill -9 -x ds2api 2>/dev/null; sleep 0.5; fi; "
+                        + "if pgrep -x ds2api >/dev/null 2>&1; then echo STILL_RUNNING; else echo STOPPED; fi", 15);
                 runOnUiThread(() -> {
                     boolean stopped = out.contains("STOPPED");
                     ds2Status.setText(stopped ? "已停止"
-                            : (out.contains("NOT_RUNNING") ? "服务未在运行" : "停止失败：" + out));
+                            : (out.contains("STILL_RUNNING") ? "停止失败：进程仍在运行（SIGKILL 后仍存活）"
+                            : "停止失败：" + out));
                     ds2Status.setTextColor(0xFFFF6E6E);
                     stopBtn.setEnabled(true);
                     if (stopped) ds2WebBox[0].reload();

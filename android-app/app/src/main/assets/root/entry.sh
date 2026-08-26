@@ -320,7 +320,11 @@ if [ -x "$DS2API_DIR/ds2api" ]; then
             export DS2API_STATIC_ADMIN_DIR=/usr/local/ds2api/static/admin
             export DS2API_CONFIG_PATH=/root/ds2api/config.json
             cd /root/ds2api
-            # 幂等：已在运行则跳过（pgrep -x 精确进程名，避免 -f 全匹配自匹配）
+            # 幂等：已在运行则跳过（pgrep -x 精确进程名，避免 -f 全匹配自匹配）。
+            # 注意：ds2api 对 SIGTERM 做优雅关闭（srv.Shutdown 最多 10s+等待活跃连接），
+            # 若上次是优雅关闭中的残留进程，pgrep 仍能查到 → 会误判"已运行"跳过启动。
+            # 因此先强清残留（SIGKILL），再判断是否真在运行，保证环境重启后必然拉起服务。
+            pkill -9 -x ds2api 2>/dev/null; sleep 0.5
             if ! pgrep -x ds2api >/dev/null 2>&1; then
                 /usr/local/ds2api/ds2api >/root/ds2api/ds2api.log 2>&1 &
                 echo "[ds2api] 已后台启动（管理台 http://127.0.0.1:5001/admin，密钥 rsxm-ds2api-admin）"
