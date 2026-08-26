@@ -3305,8 +3305,11 @@ public class MainActivity extends Activity {
 
         // 检测服务状态（面板打开时与每次操作后刷新）
         Runnable refreshDs2Status = () -> new Thread(() -> {
+            // 状态以 127.0.0.1:5001 端口可达为准（与 entry.sh 启动段 nc -z 判断一致）：
+            // 内置服务或旧版 DS2API App 任一占用端口都算"运行中"（管理页即可打开），
+            // 避免旧 App 占用时仅按内置进程 pgrep 误报"已停止"导致状态与真实不符。
             String st = executeInGuest(
-                    "pgrep -x ds2api >/dev/null 2>&1 && echo RUNNING || echo STOPPED", 6);
+                    "nc -z 127.0.0.1 5001 >/dev/null 2>&1 && echo RUNNING || echo STOPPED", 6);
             runOnUiThread(() -> {
                 boolean running = st.contains("RUNNING");
                 ds2Status.setText("服务状态：" + (running ? "运行中" : "已停止"));
@@ -3378,12 +3381,18 @@ public class MainActivity extends Activity {
         ds2Web.setWebViewClient(new WebViewClient() {
             @Override
             public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
-                // 服务未启动时给出友好提示（不显示 error 页）
+                // 服务可能还在启动中（entry.sh 后台拉起需数秒）或已停止——显示中文提示，
+                // 并延迟自动重载：内置服务就绪后页面自动恢复，避免首秒误报"服务未运行"。
                 view.loadDataWithBaseURL(null,
                         "<html><body style='background:#111;color:#aaa;font-family:sans-serif;padding:20px'>"
-                                + "<h3 style='color:#f77'>DS2API 服务未运行</h3>"
-                                + "<p>请先安装并启动 DS2API App（127.0.0.1:5001）。</p></body></html>",
+                                + "<h3 style='color:#f77'>DS2API 服务启动中</h3>"
+                                + "<p>内置 DS2API 服务正在后台启动（127.0.0.1:5001），请稍候，"
+                                + "页面将自动刷新…若持续显示此页，请点上方「停止」后再「启动」。</p></body></html>",
                         "text/html", "utf-8", null);
+                // 2.5s 后自动重载（服务就绪后自动恢复管理页）
+                view.postDelayed(() -> {
+                    try { view.reload(); } catch (Exception ignored) {}
+                }, 2500);
             }
         });
         ds2Web.loadUrl("http://127.0.0.1:5001/admin/");

@@ -142,8 +142,8 @@
       acc -= SCROLL_STEP;
     }
     if (lines > 0) {
-      // 手指上滑（dy>0）= 看更早历史 → ↑；下滑 = 回看新内容 → ↓
-      var key = dy > 0 ? '\u001b[A' : '\u001b[B';
+      // 手指上滑（dy<0，clientY 减小）= 看更早历史 → ↑；手指下滑（dy>0）= 回看新内容 → ↓
+      var key = dy < 0 ? '\u001b[A' : '\u001b[B';
       var i;
       for (i = 0; i < lines; i++) {
         try { Android.write(key); } catch (err) {}
@@ -174,10 +174,10 @@
       // 两者都做：滚 xterm scrollback + 发翻页键（shell 会忽略翻页键，无害）。
       // scrollLines 的行数按 SCROLL_STEP 缩放，保持与 TUI 翻页速度一致。
       var lines = Math.max(1, Math.round(Math.abs(dy) * 8 / SCROLL_STEP));
-      if (dy > 0) {
-        term.scrollLines(-lines);
+      if (dy < 0) {
+        term.scrollLines(-lines);   // 手指上滑：向上滚 scrollback 看更早输出
       } else {
-        term.scrollLines(lines);
+        term.scrollLines(lines);    // 手指下滑：向下滚
       }
       sendArrowKey(dy);
     }
