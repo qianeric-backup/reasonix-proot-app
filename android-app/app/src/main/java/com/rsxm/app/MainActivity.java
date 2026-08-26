@@ -267,6 +267,7 @@ public class MainActivity extends Activity {
             });
         }
         findViewById(R.id.menu_root).setOnClickListener(v -> { drawerLayout.closeDrawer(GravityCompat.START, false); showRootDialog(); });
+        findViewById(R.id.menu_keys).setOnClickListener(v -> { drawerLayout.closeDrawer(GravityCompat.START, false); showKeysDialog(); });
         findViewById(R.id.menu_skill).setOnClickListener(v -> { drawerLayout.closeDrawer(GravityCompat.START, false); showSkillInstallDialog(); });
         findViewById(R.id.menu_project).setOnClickListener(v -> { drawerLayout.closeDrawer(GravityCompat.START, false); showProjectDialog(); });
         findViewById(R.id.menu_sessions).setOnClickListener(v -> { drawerLayout.closeDrawer(GravityCompat.START, false); showSessionsDialog(); });
@@ -3319,6 +3320,99 @@ public class MainActivity extends Activity {
         addV(panel, openBtn, 12);
 
         showPanel("DS2API 网关", panel, null);
+    }
+
+    /** 发送按键序列到 reasonix 终端（原样写入 stdin，不追加换行）：
+     *  复用 write 通道（sProcIn），点击快捷键条目即把对应按键注入当前会话。 */
+    private void sendKeySeq(String seq) {
+        try {
+            if (sProcIn != null) {
+                sProcIn.write(seq.getBytes(StandardCharsets.UTF_8));
+                sProcIn.flush();
+                Log.d(TAG, "key seq sent: " + seq.replace("\u001b", "ESC").replace("\r", "CR"));
+            } else {
+                pushOutput("\r\n[终端未就绪]\r\n");
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "send key seq failed", e);
+        }
+    }
+
+    /** 快捷键面板：列出 reasonix 常用按键，点击条目即发送对应按键序列到终端
+     *  （对照官方文档 docs/CLI-REFERENCE.md 的 Keybindings 章节）。 */
+    private void showKeysDialog() {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        int pad = dp(16);
+        panel.setPadding(pad, dp(8), pad, dp(12));
+
+        // 分组：编辑 / 导航与历史 / 会话控制 / 编辑门（code mode）
+        final String[][] editKeys = {
+                {"Enter", "提交提示词", "\r"},
+                {"Ctrl+A", "跳到行首", "\u0001"},
+                {"Ctrl+E", "跳到行尾", "\u0005"},
+                {"Ctrl+W", "删除光标前一个词", "\u0017"},
+                {"Ctrl+U", "清空整个输入缓冲", "\u0015"},
+        };
+        final String[][] navKeys = {
+                {"↑", "上翻对话历史", "\u001b[A"},
+                {"↓", "下翻对话历史", "\u001b[B"},
+                {"PgUp", "整页上翻", "\u001b[5~"},
+                {"PgDn", "整页下翻", "\u001b[6~"},
+                {"End", "跳到最新一行", "\u001b[F"},
+        };
+        final String[][] sessionKeys = {
+                {"Tab", "完成 @ 提及 / 补全斜杠命令", "\t"},
+                {"Shift+Tab", "编辑门：切换 review ↔ AUTO", "\u001b[Z"},
+                {"Esc", "关闭选择器 · 中止当前模型回合", "\u001b"},
+                {"Ctrl+C", "中止当前模型回合", "\u0003"},
+        };
+        final String[][] gateKeys = {
+                {"y", "接受待处理编辑（review 弹窗）", "y"},
+                {"n", "丢弃待处理编辑（review 弹窗）", "n"},
+                {"Shift+Tab", "切换 review ↔ AUTO（跨会话记忆）", "\u001b[Z"},
+                {"u", "撤销最后一次自动应用批次（5s 横幅内）", "u"},
+        };
+
+        // 通用键盘行：按键 + 说明，点击发送
+        Runnable addGroup = null;
+        java.util.function.BiConsumer<String, String[][]> addGroupFn = (title, keys) -> {
+            panel.addView(createDarkSectionTitle(title));
+            for (String[] k : keys) {
+                LinearLayout row = new LinearLayout(this);
+                row.setOrientation(LinearLayout.HORIZONTAL);
+                row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+                row.setPadding(dp(2), dp(5), dp(2), dp(5));
+                TextView keyTv = new TextView(this);
+                keyTv.setText(k[0]);
+                keyTv.setTextColor(0xFF58A6FF);
+                keyTv.setTextSize(14);
+                keyTv.setTypeface(android.graphics.Typeface.MONOSPACE);
+                keyTv.setBackgroundColor(0xFF1E1E1E);
+                keyTv.setPadding(dp(8), dp(3), dp(8), dp(3));
+                LinearLayout.LayoutParams keyLp = new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                keyLp.rightMargin = dp(10);
+                row.addView(keyTv, keyLp);
+                TextView descTv = new TextView(this);
+                descTv.setText(k[1]);
+                descTv.setTextColor(0xFFCCCCCC);
+                descTv.setTextSize(13);
+                descTv.setLayoutParams(new LinearLayout.LayoutParams(
+                        0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+                row.addView(descTv);
+                row.setOnClickListener(v -> sendKeySeq(k[2]));
+                panel.addView(row);
+            }
+        };
+        addGroupFn.accept("编辑", editKeys);
+        addGroupFn.accept("导航与历史", navKeys);
+        addGroupFn.accept("会话控制", sessionKeys);
+        addGroupFn.accept("编辑门（code mode）", gateKeys);
+        addV(panel, createDarkTip("点击任意按键即发送到 reasonix 终端（面板保持打开，可连续点按，如连续翻页）。"
+                + "发送的是按键序列而非文本命令，reasonix 会话与 shell 均可响应。"), 10);
+
+        showPanel("快捷键", panel, null);
     }
 
     /** 更新 reasonix：从手机选择新版文件，或恢复内置版本 */
