@@ -109,6 +109,8 @@ public class MainActivity extends Activity {
     private volatile boolean environmentStarted = false;
     /** WebView 页面加载完成标记（onPageFinished 置位，超时未完成则重载页面） */
     private volatile boolean pageLoaded = false;
+    /** 悬浮快捷键工具栏显示状态（JS 侧 keys-toolbar，侧滑菜单「快捷键」切换用） */
+    private volatile boolean keysToolbarVisible = false;
     /** 复用环境标记：后台模式开启时 Activity 重建复用运行中的 proot 环境 */
     private volatile boolean reuseEnv = false;
     /** 开发环境安装中标记：防止并发安装互相覆盖 guest 内 .env-done/.env-install.log */
@@ -272,7 +274,7 @@ public class MainActivity extends Activity {
             });
         }
         findViewById(R.id.menu_root).setOnClickListener(v -> { drawerLayout.closeDrawer(GravityCompat.START, false); showRootDialog(); });
-        findViewById(R.id.menu_keys).setOnClickListener(v -> { drawerLayout.closeDrawer(GravityCompat.START, false); showKeysDialog(); });
+        findViewById(R.id.menu_keys).setOnClickListener(v -> { drawerLayout.closeDrawer(GravityCompat.START, false); toggleKeysToolbar(); });
         findViewById(R.id.menu_skill).setOnClickListener(v -> { drawerLayout.closeDrawer(GravityCompat.START, false); showSkillInstallDialog(); });
         findViewById(R.id.menu_project).setOnClickListener(v -> { drawerLayout.closeDrawer(GravityCompat.START, false); showProjectDialog(); });
         findViewById(R.id.menu_sessions).setOnClickListener(v -> { drawerLayout.closeDrawer(GravityCompat.START, false); showSessionsDialog(); });
@@ -3402,138 +3404,25 @@ public class MainActivity extends Activity {
         });
     }
 
-    /** 发送按键序列到 reasonix 终端（原样写入 stdin，不追加换行）：
-     *  复用 write 通道（sProcIn），点击快捷键条目即把对应按键注入当前会话。 */
-    private void sendKeySeq(String seq) {
-        try {
-            if (sProcIn != null) {
-                sProcIn.write(seq.getBytes(StandardCharsets.UTF_8));
-                sProcIn.flush();
-                Log.d(TAG, "key seq sent: " + seq.replace("\u001b", "ESC").replace("\r", "CR"));
-            } else {
-                pushOutput("\r\n[终端未就绪]\r\n");
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "send key seq failed", e);
-        }
-    }
 
-    /** 快捷键 3×3 弹窗：侧滑菜单「快捷键」按下后在屏幕中央弹出方形九键格
-     *  （↑ PgUp ↓ / PgDn Esc Tab / Ctrl+C Enter Shift+Tab），点击即发送按键序列
-     *  到 reasonix（复用 write 通道，不追加换行），长按连发（150ms 一次），点击震动反馈；
-     *  点弹窗外任意区域或按返回键关闭。 */
-    private void showKeysDialog() {
-        final String[][] keys = {
-                {"↑", "上翻历史", "\u001b[A"},
-                {"PgUp", "整页上翻", "\u001b[5~"},
-                {"↓", "下翻历史", "\u001b[B"},
-                {"PgDn", "整页下翻", "\u001b[6~"},
-                {"Esc", "中止/关闭", "\u001b"},
-                {"Tab", "补全", "\t"},
-                {"Ctrl+C", "中止回合", "\u0003"},
-                {"Enter", "提交", "\r"},
-                {"Shift+Tab", "编辑门", "\u001b[Z"}
-        };
-        int cell = dp(60);
-        int gap = dp(4);
-        int pad = dp(10);
 
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(pad, dp(8), pad, dp(12));
-        android.graphics.drawable.GradientDrawable boxBg = new android.graphics.drawable.GradientDrawable();
-        boxBg.setColor(0xF2121212);
-        boxBg.setCornerRadius(dp(10));
-        boxBg.setStroke(dp(1), 0xFF2A2A2A);
-        box.setBackground(boxBg);
-
-        // 标题
-        TextView title = new TextView(this);
-        title.setText("快捷键");
-        title.setTextColor(0xFF58A6FF);
-        title.setTextSize(14);
-        title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        title.setGravity(android.view.Gravity.CENTER);
-        box.addView(title, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        TextView tip = new TextView(this);
-        tip.setText("点击发送 · 长按连发");
-        tip.setTextColor(0xFF8A8A8A);
-        tip.setTextSize(11);
-        tip.setGravity(android.view.Gravity.CENTER);
-        box.addView(tip, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        // 3×3 方形按钮
-        for (int row = 0; row < 3; row++) {
-            LinearLayout rowL = new LinearLayout(this);
-            rowL.setOrientation(LinearLayout.HORIZONTAL);
-            for (int c = 0; c < 3; c++) {
-                final String[] k = keys[row * 3 + c];
-                Button btn = new Button(this);
-                btn.setText(k[0]);
-                btn.setTextColor(0xFFE6EDF3);
-                btn.setTextSize(12);
-                btn.setAllCaps(false);
-                btn.setTypeface(android.graphics.Typeface.MONOSPACE);
-                btn.setGravity(android.view.Gravity.CENTER);
-                // 方形圆角背景 + 按下高亮
-                android.graphics.drawable.StateListDrawable sld = new android.graphics.drawable.StateListDrawable();
-                android.graphics.drawable.GradientDrawable pressed = new android.graphics.drawable.GradientDrawable();
-                pressed.setColor(0xFF2D4A75);
-                pressed.setCornerRadius(dp(6));
-                android.graphics.drawable.GradientDrawable normal = new android.graphics.drawable.GradientDrawable();
-                normal.setColor(0xFF1E1E1E);
-                normal.setCornerRadius(dp(6));
-                normal.setStroke(dp(1), 0xFF444444);
-                sld.addState(new int[]{android.R.attr.state_pressed}, pressed);
-                sld.addState(new int[]{}, normal);
-                btn.setBackground(sld);
-                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(cell, cell);
-                if (c > 0) lp.leftMargin = gap;
-                rowL.addView(btn, lp);
-                btn.setOnClickListener(v -> {
-                    sendKeySeq(k[2]);
-                    // 震动反馈：瞬时短震（硬件支持时），让点击可感知
-                    try {
-                        android.os.Vibrator vb = (android.os.Vibrator) getSystemService(VIBRATOR_SERVICE);
-                        if (vb != null && vb.hasVibrator()) vb.vibrate(25);
-                    } catch (Exception ignored) {}
-                });
-                // 长按连发：按住持续发送（翻页/上下翻连续滚动用）
-                btn.setOnLongClickListener(v -> {
-                    final Runnable[] r = new Runnable[1];
-                    r[0] = new Runnable() {
-                        @Override
-                        public void run() {
-                            sendKeySeq(k[2]);
-                            ui.postDelayed(r[0], 150);
-                        }
-                    };
-                    r[0].run();
-                    btn.setOnTouchListener((view, ev) -> {
-                        if (ev.getAction() == android.view.MotionEvent.ACTION_UP
-                                || ev.getAction() == android.view.MotionEvent.ACTION_CANCEL) {
-                            ui.removeCallbacks(r[0]);
-                            btn.setOnTouchListener(null);
-                        }
-                        return false;
-                    });
-                    return true;
-                });
-            }
-            box.addView(rowL);
-        }
-
-        // 弹出：屏幕居中，点击外部/返回键关闭
-        PopupWindow pop = new PopupWindow(box,
-                cell * 3 + gap * 2 + pad * 2,
-                ViewGroup.LayoutParams.WRAP_CONTENT, true);
-        pop.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-        pop.setOutsideTouchable(true);
-        pop.setFocusable(true);
-        try { pop.setElevation(dp(8)); } catch (Exception ignored) {}
-        pop.showAtLocation(findViewById(R.id.drawer_layout), android.view.Gravity.CENTER, 0, 0);
+    /** 快捷键入口：侧滑菜单「快捷键」点击切换悬浮工具栏显示/隐藏。
+     *  工具栏内置于 WebView（index.html），九键（↑ PgUp ↓ / PgDn Esc Tab /
+     *  Ctrl+C Enter Shift+Tab）直接写终端通道，可拖拽定位、右上角 ✕ 关闭。
+     *  此处只调用 JS 暴露的 showKeysToolbar/hideKeysToolbar 切换显示状态，
+     *  不再弹系统 PopupWindow（避免遮挡终端与输入）。 */
+    private void toggleKeysToolbar() {
+        if (webView == null) return;
+        // 记忆当前显示状态：切换需反向（显示→隐藏）
+        keysToolbarVisible = !keysToolbarVisible;
+        String js = keysToolbarVisible ? "window.showKeysToolbar&&window.showKeysToolbar();"
+                : "window.hideKeysToolbar&&window.hideKeysToolbar();";
+        ui.post(() -> {
+            try {
+                webView.evaluateJavascript(js, null);
+            } catch (Exception ignored) {}
+        });
+        showToast(keysToolbarVisible ? "快捷键工具栏已显示" : "快捷键工具栏已隐藏");
     }
 
     /** 更新 reasonix：从手机选择新版文件，或恢复内置版本 */

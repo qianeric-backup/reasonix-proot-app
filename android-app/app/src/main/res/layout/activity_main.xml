@@ -259,7 +259,7 @@
                         android:layout_marginTop="1dp"
                         android:gravity="center_vertical"
                         android:paddingLeft="16dp"
-                        android:text="快捷键"
+                        android:text="快捷键（悬浮工具栏）"
                         android:textColor="#FFFFFF"
                         android:textSize="15sp" />
 
