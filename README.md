@@ -17,6 +17,7 @@
   - **API Key 配置**：随时查看/修改 DeepSeek API Key（写入 `~/.reasonix/.env`，保存后自动重启环境）。
   - **DS2API 网关（内置）**：应用启动时自动在 Linux 环境后台运行内置的 DS2API 服务（上游 [CJackHwang/ds2api](https://github.com/CJackHwang/ds2api) AGPL-3.0，v4.6.1），管理台 `http://127.0.0.1:5001/admin`（初始管理密钥 `rsxm-ds2api-admin`，首次保存配置后持久化到 `/root/ds2api/config.json`）；若旧版 DS2API App 已占用 5001 端口则内置服务不重复启动。
   - **快捷键**：侧滑栏「快捷键」弹出 reasonix 常用按键面板（Enter / Ctrl+A / Ctrl+E / Ctrl+W / Ctrl+U、↑↓、PgUp / PgDn、End、Tab / Shift+Tab、Esc、Ctrl+C、编辑门 y / n / u 等），点击条目即把对应按键序列发送到 reasonix 终端（不追加换行，面板保持打开可连续点按翻页）。
+  - **MCP 服务器**：管理当前项目 `.mcp.json`（reasonix 按项目根 `.mcp.json` 的 `mcpServers` 发现 MCP 服务器）：列出已配置服务器（名称/类型/摘要），表单添加/编辑/删除——本地命令型选 stdio（command + args + env），远程选 http/sse（url + headers），支持 `auto_start` 开关（关闭则需在终端手动 `reasonix mcp start`）；`${VAR}` 环境变量按 CLI 原生规则展开；保存后重启环境生效。
   - **更新 resonix**：从官方 npm 包（`@reasonix/cli-linux-arm64`，npmmirror 国内镜像）下载 tgz 解压更新，或从手机选择新版文件、恢复内置版本。
 - **离线打包**：Alpine rootfs、proot、reasonix、xterm.js 与 DS2API 全部内置，首次启动解压后无需网络（reasonix 调用 API / DS2API 连接 DeepSeek 时才需联网）。
 - **手机存储访问**：guest 内 `/sdcard` 直接映射手机共享存储；首次启动引导"所有文件访问"授权（授权后自动重启环境生效），并可读写宿主 app 私有数据（`/host-data`）与只读系统分区（`/host/system` 等）。
